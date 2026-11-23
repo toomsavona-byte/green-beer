@@ -1,0 +1,6 @@
+{
+  "name": "GREEN BEER PIZEDES",
+  "description": "Хардкорный 2D beat 'em up / run 'n' gun в стиле Sega Mega Drive: 8 героев, 5 уровней с боссами, мотоциклетная погоня и локальный кооп 2P на одной клавиатуре.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
