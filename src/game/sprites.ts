@@ -3140,6 +3140,41 @@ export function drawEnemySprite(ctx: CanvasRenderingContext2D, e: EnemyRenderOpt
   ctx.restore();
 }
 
+/**
+ * Draws a road-surface strip (crosswalk stripe, sewer grate, puddle, lane dash, slime channel, conveyor)
+ * that conforms pixel-perfectly to both steep ramp slopes and ramp hinge bends!
+ */
+function drawSlopedStrip(
+  ctx: CanvasRenderingContext2D,
+  levelId: LevelDef['id'],
+  camX: number,
+  camY: number,
+  worldX: number,
+  yOffset: number,
+  w: number,
+  h: number,
+  fill: string | CanvasGradient
+): void {
+  const segs = Math.max(1, Math.ceil(w / 8));
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  for (let i = 0; i <= segs; i++) {
+    const wx = worldX + (w * i) / segs;
+    const sx = wx - camX;
+    const y = yOffset + getGroundElevation(levelId, wx) - camY;
+    if (i === 0) ctx.moveTo(sx, y);
+    else ctx.lineTo(sx, y);
+  }
+  for (let i = segs; i >= 0; i--) {
+    const wx = worldX + (w * i) / segs;
+    const sx = wx - camX;
+    const y = yOffset + h + getGroundElevation(levelId, wx) - camY;
+    ctx.lineTo(sx, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
 function drawSlopedGroundSurface(
   ctx: CanvasRenderingContext2D,
   levelId: LevelDef['id'],
@@ -3940,32 +3975,36 @@ export function drawLevelBackground(
     const roadStart = Math.floor(camX / roadTile) - 1;
     for (let k = 0; k < 8; k++) {
       const rIdx = roadStart + k;
-      const rx = rIdx * roadTile - camX;
-      const rEl0 = getGroundElevation(1, rIdx * roadTile + 8) - camY;
-      const rEl1 = getGroundElevation(1, rIdx * roadTile + 42) - camY;
-      const rEl = getGroundElevation(1, rIdx * roadTile + 24) - camY;
+      const tileWorldX = rIdx * roadTile;
+      const rx = tileWorldX - camX;
       // Sloped center dashed road stripe
-      ctx.strokeStyle = '#334155';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(rx + 8, 206 + rEl0);
-      ctx.lineTo(rx + 42, 206 + rEl1);
-      ctx.stroke();
-
-      px(ctx, rx + 12, FLOOR_MIN_Y + 10 + rEl, 18, 5, '#070A0F');
+      drawSlopedStrip(ctx, 1, camX, camY, tileWorldX + 8, 206, 34, 3, '#334155');
+      // Sloped storm-drain sewer grate flush with curb & ramp bend
+      drawSlopedStrip(ctx, 1, camX, camY, tileWorldX + 12, FLOOR_MIN_Y + 10, 18, 5, '#070A0F');
       if (tileHash(rIdx, 91) % 3 === 0) {
+        const grateEl = getGroundElevation(1, tileWorldX + 21) - camY;
         const st = (time * 24 + rIdx * 11) % 24;
         ctx.fillStyle = `rgba(203, 213, 225, ${0.22 * (1 - st / 24)})`;
         ctx.beginPath();
-        ctx.arc(rx + 21 + Math.sin(time * 3 + rIdx) * 3, FLOOR_MIN_Y + 10 + rEl - st, 4 + st * 0.25, 0, Math.PI * 2);
+        ctx.arc(rx + 21 + Math.sin(time * 3 + rIdx) * 3, FLOOR_MIN_Y + 11 + grateEl - st, 4 + st * 0.25, 0, Math.PI * 2);
         ctx.fill();
       }
       if (tileHash(rIdx, 93) % 5 === 0) {
-        for (let cy = FLOOR_MIN_Y + 16; cy < VIRTUAL_H - 12; cy += 14) {
-          px(ctx, rx + 42, cy + rEl, 24, 6, 'rgba(226, 232, 240, 0.14)');
+        for (let cy = FLOOR_MIN_Y + 16; cy <= VIRTUAL_H - 18; cy += 14) {
+          drawSlopedStrip(ctx, 1, camX, camY, tileWorldX + 42, cy, 24, 6, 'rgba(226, 232, 240, 0.16)');
         }
       }
-      px(ctx, rx + 24, 174 + rEl, 26, 4, rIdx % 2 === 0 ? 'rgba(57, 255, 20, 0.16)' : 'rgba(0, 229, 255, 0.16)');
+      drawSlopedStrip(
+        ctx,
+        1,
+        camX,
+        camY,
+        tileWorldX + 24,
+        174,
+        26,
+        4,
+        rIdx % 2 === 0 ? 'rgba(57, 255, 20, 0.16)' : 'rgba(0, 229, 255, 0.16)'
+      );
     }
 
     // Diagonal night rain streaks
@@ -4147,25 +4186,19 @@ export function drawLevelBackground(
     const tScroll = Math.floor(camX / 56) - 1;
     for (let k = 0; k < 11; k++) {
       const idx = tScroll + k;
-      const rx = idx * 56 - camX;
-      const rEl0 = getGroundElevation(2, idx * 56) - camY;
-      const rEl1 = getGroundElevation(2, idx * 56 + 46) - camY;
-      const rEl = getGroundElevation(2, idx * 56 + 24) - camY;
-      // Warm sunlit paving joints & realistic daytime shadows
-      px(ctx, rx, FLOOR_MIN_Y + 9 + rEl0, 1, VIRTUAL_H - FLOOR_MIN_Y - 12, 'rgba(120, 113, 108, 0.35)');
-      ctx.strokeStyle = 'rgba(120, 113, 108, 0.28)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(rx + 8, 198 + rEl0);
-      ctx.lineTo(rx + 46, 198 + rEl1);
-      ctx.stroke();
+      const tileWorldX = idx * 56;
+      const rx = tileWorldX - camX;
+      const rEl0 = getGroundElevation(2, tileWorldX) - camY;
+      // Warm sunlit paving joints & realistic daytime shadows aligned strictly inside sloped deck
+      px(ctx, rx, FLOOR_MIN_Y + 9 + rEl0, 1, VIRTUAL_H - FLOOR_MIN_Y - 16, 'rgba(120, 113, 108, 0.35)');
+      drawSlopedStrip(ctx, 2, camX, camY, tileWorldX + 8, 198, 38, 1.5, 'rgba(120, 113, 108, 0.28)');
       if (tileHash(idx, 27) % 4 === 0) {
-        px(ctx, rx + 14, 184 + rEl, 20, 4, 'rgba(34, 197, 94, 0.24)'); // green beer spill
+        drawSlopedStrip(ctx, 2, camX, camY, tileWorldX + 14, 184, 20, 4, 'rgba(34, 197, 94, 0.24)'); // green beer spill
       }
       if (tileHash(idx, 29) % 5 === 1) {
-        // Sunlit crosswalk stripes
-        for (let cy = FLOOR_MIN_Y + 16; cy < VIRTUAL_H - 12; cy += 14) {
-          px(ctx, rx + 12, cy + rEl, 26, 6, 'rgba(255, 255, 255, 0.45)');
+        // Sunlit crosswalk stripes hugging ramp angle & bends
+        for (let cy = FLOOR_MIN_Y + 16; cy <= VIRTUAL_H - 18; cy += 14) {
+          drawSlopedStrip(ctx, 2, camX, camY, tileWorldX + 12, cy, 26, 6, 'rgba(255, 255, 255, 0.45)');
         }
       }
     }
@@ -4336,18 +4369,10 @@ export function drawLevelBackground(
     const cStart = Math.floor(camX / 72) - 1;
     for (let k = 0; k < 9; k++) {
       const idx = cStart + k;
-      const rx = idx * 72 - camX;
-      const rEl0 = getGroundElevation(3, idx * 72) - camY;
-      const rEl1 = getGroundElevation(3, idx * 72 + 38) - camY;
-      const rEl = getGroundElevation(3, idx * 72 + 24) - camY;
-      ctx.strokeStyle = '#243244';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(rx, 198 + rEl0);
-      ctx.lineTo(rx + 38, 198 + rEl1);
-      ctx.stroke();
-      px(ctx, rx + 12, 168 + rEl, 22, 3, 'rgba(0,229,255,0.22)');
-      px(ctx, rx + 40, 232 + rEl, 24, 4, 'rgba(57,255,20,0.16)');
+      const tileWorldX = idx * 72;
+      drawSlopedStrip(ctx, 3, camX, camY, tileWorldX, 198, 38, 3, '#243244');
+      drawSlopedStrip(ctx, 3, camX, camY, tileWorldX + 12, 168, 22, 3, 'rgba(0,229,255,0.22)');
+      drawSlopedStrip(ctx, 3, camX, camY, tileWorldX + 40, 232, 24, 4, 'rgba(57,255,20,0.16)');
     }
 
   // =========================================================================
@@ -4470,21 +4495,13 @@ export function drawLevelBackground(
     }
     ctx.stroke();
     for (let x = -(speedScroll % 44); x < VIRTUAL_W; x += 44) {
-      const gy = FLOOR_MIN_Y - 6 + getGroundElevation(4, camX + Math.max(0, x)) - camY;
-      px(ctx, x, gy, 8, 3, '#F97316');
+      drawSlopedStrip(ctx, 4, camX, camY, camX + x, FLOOR_MIN_Y - 6, 8, 3, '#F97316');
     }
 
-    // Sloped crisp white dashed highway lane markings tilted along steep ramps!
-    ctx.strokeStyle = '#F8FAFC';
-    ctx.lineWidth = 3;
+    // Sloped crisp white dashed highway lane markings tilted along steep ramps & bends!
     for (const laneY of [184, 220]) {
       for (let x = -(speedScroll % 72); x < VIRTUAL_W; x += 72) {
-        const y0 = laneY + getGroundElevation(4, camX + x) - camY;
-        const y1 = laneY + getGroundElevation(4, camX + x + 36) - camY;
-        ctx.beginPath();
-        ctx.moveTo(x, y0);
-        ctx.lineTo(x + 36, y1);
-        ctx.stroke();
+        drawSlopedStrip(ctx, 4, camX, camY, camX + x, laneY, 36, 3, '#F8FAFC');
       }
     }
     // Subtle sunlit asphalt wind-rush streaks
@@ -4543,10 +4560,11 @@ export function drawLevelBackground(
       const mStart = Math.floor(camX / 64) - 1;
       for (let k = 0; k < 10; k++) {
         const idx = mStart + k;
-        const rx = idx * 64 - camX;
-        const rEl = getGroundElevation(6, idx * 64 + 24) - camY;
-        px(ctx, rx, FLOOR_MIN_Y + 8 + rEl, 1.5, VIRTUAL_H - FLOOR_MIN_Y - 12, '#CBD5E1');
-        px(ctx, rx + 14, 198 + rEl, 30, 2, 'rgba(16, 185, 129, 0.28)');
+        const tileWorldX = idx * 64;
+        const rx = tileWorldX - camX;
+        const rEl = getGroundElevation(6, tileWorldX) - camY;
+        px(ctx, rx, FLOOR_MIN_Y + 9 + rEl, 1.5, VIRTUAL_H - FLOOR_MIN_Y - 16, '#CBD5E1');
+        drawSlopedStrip(ctx, 6, camX, camY, tileWorldX + 14, 198, 30, 2, 'rgba(16, 185, 129, 0.28)');
       }
     } else if (camX > 3100) {
       // ACT 2: BRIGHT DAYLIGHT GLASS R&D LAB & STERILE MAINFRAME CORRIDOR
@@ -4629,10 +4647,11 @@ export function drawLevelBackground(
       const fStart = Math.floor(camX / 56) - 1;
       for (let k = 0; k < 10; k++) {
         const idx = fStart + k;
-        const rx = idx * 56 - camX;
-        const rEl = getGroundElevation(6, idx * 56 + 24) - camY;
-        px(ctx, rx, FLOOR_MIN_Y + 8 + rEl, 1, VIRTUAL_H - FLOOR_MIN_Y - 12, '#CBD5E1');
-        px(ctx, rx + 10, 206 + rEl, 24, 2, 'rgba(2,132,199,0.22)');
+        const tileWorldX = idx * 56;
+        const rx = tileWorldX - camX;
+        const rEl = getGroundElevation(6, tileWorldX) - camY;
+        px(ctx, rx, FLOOR_MIN_Y + 9 + rEl, 1, VIRTUAL_H - FLOOR_MIN_Y - 16, '#CBD5E1');
+        drawSlopedStrip(ctx, 6, camX, camY, tileWorldX + 10, 206, 24, 2, 'rgba(2,132,199,0.22)');
       }
     } else {
       // ACT 1: BRIGHT DAYLIGHT MODERN BREWERY HALL WITH SKYLIGHT SUNBEAMS!
@@ -4728,12 +4747,12 @@ export function drawLevelBackground(
 
       // Bright Polished Light-Epoxy Factory Floor + Sloped Green-Beer Conveyor Belt!
       drawSlopedGroundSurface(ctx, 6, camX, camY, '#CBD5E1', '#F1F5F9', '#64748B');
+      drawSlopedStrip(ctx, 6, camX, camY, camX, FLOOR_MIN_Y + 9, VIRTUAL_W, 11, '#334155');
       const bScroll = Math.floor(time * 75) % 24;
-      for (let x = 0; x < VIRTUAL_W; x += 24) {
-        const bEl = getGroundElevation(6, camX + x) - camY;
-        px(ctx, x, FLOOR_MIN_Y + 9 + bEl, 24, 11, '#334155');
-        px(ctx, x - (bScroll % 24) + 12, FLOOR_MIN_Y + 11 + bEl, 8, 7, '#22C55E');
-        px(ctx, x - (bScroll % 24) + 14, FLOOR_MIN_Y + 10 + bEl, 4, 2, '#ECFCCB');
+      for (let x = -24; x < VIRTUAL_W + 24; x += 24) {
+        const crateWorldX = camX + x - bScroll + 12;
+        drawSlopedStrip(ctx, 6, camX, camY, crateWorldX, FLOOR_MIN_Y + 11, 8, 7, '#22C55E');
+        drawSlopedStrip(ctx, 6, camX, camY, crateWorldX + 2, FLOOR_MIN_Y + 10, 4, 2, '#ECFCCB');
       }
     }
   }
@@ -4751,19 +4770,70 @@ function drawLevelLandmarks(
 ): void {
   const pulse = 0.5 + 0.5 * Math.sin(time * 5.5);
 
-  // 1. Render Interactive Jumpable Road Hazards & Obstacles anchored to sloped terrain!
+  // 1. Render Interactive Jumpable Road Hazards & Obstacles aligned precisely to sloped terrain!
   if (level.roadHazards) {
     for (const hz of level.roadHazards) {
       const sx = Math.round(hz.x - camX);
       if (sx < -150 || sx > VIRTUAL_W + 150) continue;
 
-      const hzElev = Math.round(getGroundElevation(level.id, hz.x) - camY);
-      ctx.save();
-      ctx.translate(0, hzElev);
-
-      const x0 = sx - hz.w / 2;
-      const y0 = hz.y - hz.h / 2;
+      const hzElev = getGroundElevation(level.id, hz.x) - camY;
+      const slopeTan =
+        (getGroundElevation(level.id, hz.x + 12) - getGroundElevation(level.id, hz.x - 12)) / 24;
       const warnBlink = Math.floor(time * 7) % 2 === 0;
+      const roadTop = FLOOR_MIN_Y + 8;
+      const roadBot = VIRTUAL_H - 7;
+      const roadSpanH = roadBot - roadTop;
+
+      if (hz.kind === 'slime_river') {
+        // Follows exact ramp slope AND ramp bends with zero overhang above curb or below road deck!
+        const leftWx = hz.x - hz.w / 2;
+        const leftEl = getGroundElevation(level.id, leftWx - 3) - camY;
+        const rightEl = getGroundElevation(level.id, leftWx + hz.w) - camY;
+
+        drawSlopedStrip(ctx, level.id, camX, camY, leftWx - 4, roadTop, hz.w + 8, roadSpanH, '#0F1A14');
+        const rg = ctx.createLinearGradient(sx - hz.w / 2, 0, sx + hz.w / 2, 0);
+        rg.addColorStop(0, '#14532D');
+        rg.addColorStop(0.22, '#22C55E');
+        rg.addColorStop(0.5, '#39FF14');
+        rg.addColorStop(0.78, '#22C55E');
+        rg.addColorStop(1, '#14532D');
+        drawSlopedStrip(ctx, level.id, camX, camY, leftWx, roadTop, hz.w, roadSpanH, rg);
+
+        const flow = (time * 32) % 24;
+        for (let b = 0; b < 6; b++) {
+          const bxOff = 7 + ((b * 13) % Math.max(8, hz.w - 16));
+          const bWx = leftWx + bxOff;
+          const bEl = getGroundElevation(level.id, bWx) - camY;
+          const by = roadTop + 2 + ((b * 18 + flow) % Math.max(12, roadSpanH - 12)) + bEl;
+          const bx = bWx - camX;
+          drawSlopedStrip(ctx, level.id, camX, camY, bWx, by - bEl, 6, 2, '#D9F99D');
+          const br = 2 + (Math.sin(time * 6 + b * 2) + 1) * 1.4;
+          ctx.fillStyle = '#ECFCCB';
+          ctx.beginPath();
+          ctx.arc(bx + 3, by + 4, br, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Left & right glowing curb borders strictly anchored to left/right ramp elevation
+        px(ctx, sx - hz.w / 2 - 3, roadTop + leftEl, 3, roadSpanH, warnBlink ? '#39FF14' : '#FACC15');
+        px(ctx, sx + hz.w / 2, roadTop + rightEl, 3, roadSpanH, warnBlink ? '#39FF14' : '#FACC15');
+
+        // Crisp horizontal warning badge above upper curb
+        const badgeY = Math.round(FLOOR_MIN_Y + hzElev);
+        ctx.fillStyle = '#090C11';
+        ctx.fillRect(sx - 28, badgeY - 12, 56, 8);
+        ctx.fillStyle = '#D9F99D';
+        ctx.font = 'bold 6px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('ЖИЖА · ПРЫЖОК', sx, badgeY - 6);
+        ctx.textAlign = 'left';
+        continue;
+      }
+
+      // Vertical shear aligns obstacle top & bottom edges parallel to the exact ramp slope!
+      ctx.save();
+      ctx.transform(1, slopeTan, 0, 1, sx, hzElev);
+      const x0 = -hz.w / 2;
+      const y0 = hz.y - hz.h / 2;
 
       if (hz.kind === 'bridge_hole') {
         for (let c = 0; c < 3; c++) {
@@ -4825,45 +4895,15 @@ function drawLevelLandmarks(
         ctx.lineTo(x0 + hz.w - 16, y0 + hz.h - 14);
         ctx.stroke();
 
+        ctx.restore();
         ctx.fillStyle = warnBlink ? '#FACC15' : '#FFFFFF';
         ctx.font = 'bold 6px monospace';
-        ctx.fillText('ПРОВАЛ!', sx - 16, y0 - 5);
-      } else if (hz.kind === 'slime_river') {
-        const topY = FLOOR_MIN_Y + 1;
-        const riverH = VIRTUAL_H - FLOOR_MIN_Y - 2;
-        px(ctx, x0 - 4, topY, hz.w + 8, riverH, '#0F1A14');
-        const rg = ctx.createLinearGradient(x0, topY, x0 + hz.w, topY);
-        rg.addColorStop(0, '#14532D');
-        rg.addColorStop(0.22, '#22C55E');
-        rg.addColorStop(0.5, '#39FF14');
-        rg.addColorStop(0.78, '#22C55E');
-        rg.addColorStop(1, '#14532D');
-        ctx.fillStyle = rg;
-        ctx.fillRect(x0, topY, hz.w, riverH);
-
-        const flow = (time * 32) % 24;
-        for (let b = 0; b < 6; b++) {
-          const by = topY + ((b * 18 + flow) % (riverH - 8));
-          const bx = x0 + 7 + ((b * 13) % Math.max(8, hz.w - 16));
-          px(ctx, bx, by, 6, 2, '#D9F99D');
-          const br = 2 + ((Math.sin(time * 6 + b * 2) + 1) * 1.4);
-          ctx.fillStyle = '#ECFCCB';
-          ctx.beginPath();
-          ctx.arc(bx + 3, by + 4, br, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        px(ctx, x0 - 3, topY, 3, riverH, warnBlink ? '#39FF14' : '#FACC15');
-        px(ctx, x0 + hz.w, topY, 3, riverH, warnBlink ? '#39FF14' : '#FACC15');
-        ctx.fillStyle = '#090C11';
-        ctx.fillRect(sx - 28, topY - 10, 56, 8);
-        ctx.fillStyle = '#D9F99D';
-        ctx.font = 'bold 6px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('ЖИЖА · ПРЫЖОК', sx, topY - 4);
+        ctx.fillText('ПРОВАЛ!', sx, Math.round(y0 - 5 + hzElev));
         ctx.textAlign = 'left';
       } else if (hz.kind === 'barrier') {
-        const topY = FLOOR_MIN_Y + 2;
-        const barH = VIRTUAL_H - FLOOR_MIN_Y - 6;
+        const topY = roadTop;
+        const barH = roadSpanH - 2;
         px(ctx, x0 + 5, topY + 2, hz.w, barH, 'rgba(0,0,0,0.42)');
         for (let seg = 0; seg < 3; seg++) {
           const sy = topY + seg * (barH / 3);
@@ -4873,36 +4913,40 @@ function drawLevelLandmarks(
             px(ctx, x0 + 3, hy, hz.w - 6, 4, '#FACC15');
             px(ctx, x0 + 3, hy + 4, hz.w - 6, 4, '#090C11');
           }
-          px(ctx, sx - 2, sy + 2, 4, 3, warnBlink ? '#FF2A85' : '#7F1D1D');
+          px(ctx, -2, sy + 2, 4, 3, warnBlink ? '#FF2A85' : '#7F1D1D');
         }
+        ctx.restore();
+        const badgeY = Math.round(FLOOR_MIN_Y + hzElev);
         ctx.fillStyle = '#090C11';
-        ctx.fillRect(sx - 30, topY - 10, 60, 8);
+        ctx.fillRect(sx - 30, badgeY - 12, 60, 8);
         ctx.fillStyle = warnBlink ? '#FACC15' : '#FFFFFF';
         ctx.font = 'bold 6px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('БАРЬЕР · ПРЫЖОК', sx, topY - 4);
+        ctx.fillText('БАРЬЕР · ПРЫЖОК', sx, badgeY - 6);
         ctx.textAlign = 'left';
       } else if (hz.kind === 'boom_gate') {
-        const topY = FLOOR_MIN_Y;
-        const gateH = VIRTUAL_H - FLOOR_MIN_Y - 4;
-        box(ctx, sx - 10, topY - 24, 20, 26, '#1E293B', '#64748B', INK);
-        px(ctx, sx - 5, topY - 21, 10, 5, warnBlink ? '#FF2A85' : '#39FF14');
-        px(ctx, sx - 2, topY + 4, 9, gateH, 'rgba(0,0,0,0.4)');
-        for (let py = topY; py < topY + gateH; py += 12) {
+        const topY = roadTop;
+        const gateH = roadSpanH;
+        box(ctx, -10, topY - 24, 20, 26, '#1E293B', '#64748B', INK);
+        px(ctx, -5, topY - 21, 10, 5, warnBlink ? '#FF2A85' : '#39FF14');
+        px(ctx, -2, topY + 4, 9, gateH - 4, 'rgba(0,0,0,0.4)');
+        for (let py = topY; py < topY + gateH - 6; py += 12) {
           const isRed = Math.floor(py / 12) % 2 === 0;
-          box(ctx, sx - 5, py, 10, 12, isRed ? '#DC2626' : '#F8FAFC', isRed ? '#FCA5A5' : '#FFFFFF', INK);
+          box(ctx, -5, py, 10, Math.min(12, topY + gateH - py), isRed ? '#DC2626' : '#F8FAFC', isRed ? '#FCA5A5' : '#FFFFFF', INK);
         }
-        box(ctx, sx - 7, topY + gateH - 8, 14, 10, '#334155', '#94A3B8', INK);
+        box(ctx, -7, topY + gateH - 8, 14, 9, '#334155', '#94A3B8', INK);
+        ctx.restore();
+        const badgeY = Math.round(roadTop + hzElev);
         ctx.fillStyle = '#090C11';
-        ctx.fillRect(sx - 34, topY - 34, 68, 8);
+        ctx.fillRect(sx - 34, badgeY - 34, 68, 8);
         ctx.fillStyle = '#FACC15';
         ctx.font = 'bold 6px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('ШЛАГБАУМ · ПРЫЖОК', sx, topY - 28);
+        ctx.fillText('ШЛАГБАУМ · ПРЫЖОК', sx, badgeY - 28);
         ctx.textAlign = 'left';
       } else if (hz.kind === 'crate_row') {
-        const topY = FLOOR_MIN_Y + 2;
-        const rowH = VIRTUAL_H - FLOOR_MIN_Y - 6;
+        const topY = roadTop;
+        const rowH = roadSpanH - 2;
         const count = 4;
         const ch = rowH / count;
         for (let i = 0; i < count; i++) {
@@ -4917,45 +4961,49 @@ function drawLevelLandmarks(
           ctx.moveTo(x0 + hz.w - 3, cy + 3);
           ctx.lineTo(x0 + 3, cy + ch - 5);
           ctx.stroke();
-          px(ctx, sx - 3, cy + ch * 0.35, 6, 4, '#39FF14');
+          px(ctx, -3, cy + ch * 0.35, 6, 4, '#39FF14');
         }
+        ctx.restore();
+        const badgeY = Math.round(FLOOR_MIN_Y + hzElev);
         ctx.fillStyle = '#090C11';
-        ctx.fillRect(sx - 30, topY - 10, 60, 8);
+        ctx.fillRect(sx - 30, badgeY - 12, 60, 8);
         ctx.fillStyle = '#FDE047';
         ctx.font = 'bold 6px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('ЯЩИКИ · ПРЫЖОК', sx, topY - 4);
+        ctx.fillText('ЯЩИКИ · ПРЫЖОК', sx, badgeY - 6);
         ctx.textAlign = 'left';
       } else if (hz.kind === 'laser_gate') {
-        const topY = FLOOR_MIN_Y;
-        const botY = VIRTUAL_H - 6;
+        const topY = roadTop;
+        const botY = roadBot;
         const phase = (time + (hz.pulseOffset ?? 0)) % 2.8;
         const active = phase < 2.0;
 
-        box(ctx, sx - 9, topY - 14, 18, 16, '#0F172A', '#00E5FF', INK);
-        box(ctx, sx - 9, botY - 8, 18, 10, '#0F172A', '#00E5FF', INK);
-        px(ctx, sx - 3, topY - 9, 6, 4, active ? '#FF2A85' : '#334155');
-        px(ctx, sx - 3, botY - 5, 6, 3, active ? '#FF2A85' : '#334155');
+        box(ctx, -9, topY - 14, 18, 16, '#0F172A', '#00E5FF', INK);
+        box(ctx, -9, botY - 8, 18, 10, '#0F172A', '#00E5FF', INK);
+        px(ctx, -3, topY - 9, 6, 4, active ? '#FF2A85' : '#334155');
+        px(ctx, -3, botY - 5, 6, 3, active ? '#FF2A85' : '#334155');
 
         if (active) {
           ctx.fillStyle = `rgba(255, 42, 133, ${0.32 + pulse * 0.28})`;
-          ctx.fillRect(sx - 6, topY + 2, 12, botY - topY - 10);
-          px(ctx, sx - 2, topY + 2, 4, botY - topY - 10, '#FF2A85');
-          px(ctx, sx - 0.8, topY + 2, 1.6, botY - topY - 10, '#FFFFFF');
+          ctx.fillRect(-6, topY + 2, 12, botY - topY - 10);
+          px(ctx, -2, topY + 2, 4, botY - topY - 10, '#FF2A85');
+          px(ctx, -0.8, topY + 2, 1.6, botY - topY - 10, '#FFFFFF');
         } else {
-          px(ctx, sx - 1, topY + 2, 2, botY - topY - 10, 'rgba(0, 229, 255, 0.35)');
+          px(ctx, -1, topY + 2, 2, botY - topY - 10, 'rgba(0, 229, 255, 0.35)');
         }
+        ctx.restore();
 
+        const badgeY = Math.round(roadTop + hzElev);
         ctx.fillStyle = '#090C11';
-        ctx.fillRect(sx - 28, topY - 23, 56, 8);
+        ctx.fillRect(sx - 28, badgeY - 23, 56, 8);
         ctx.fillStyle = active ? '#FF2A85' : '#00E5FF';
         ctx.font = 'bold 6px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(active ? 'ЛАЗЕР · ПРЫЖОК' : 'ПЕРЕЗАРЯДКА', sx, topY - 17);
+        ctx.fillText(active ? 'ЛАЗЕР · ПРЫЖОК' : 'ПЕРЕЗАРЯДКА', sx, badgeY - 17);
         ctx.textAlign = 'left';
+      } else {
+        ctx.restore();
       }
-
-      ctx.restore();
     }
   }
 

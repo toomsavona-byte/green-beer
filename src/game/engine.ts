@@ -19,7 +19,7 @@ import {
   VIRTUAL_H,
   VIRTUAL_W,
 } from './sprites';
-import { getCameraOffsetY, getGroundElevation, getGroundSlope } from './terrain';
+import { getCameraOffsetY, getGroundElevation, getGroundSlope, randomizeLevelTerrain } from './terrain';
 import {
   BossHudInfo,
   DifficultyId,
@@ -561,6 +561,11 @@ export class GameEngine {
 
     this.camX = 0;
     this.camLocked = this.level.mode === 'elevator';
+    randomizeLevelTerrain(
+      this.level.id,
+      this.level.length,
+      this.onlineMode ? this.level.id * 9187 + 1337 : undefined
+    );
     this.activeZoneIndex = 0;
     this.bossSpawned = false;
     this.bossDefeated = false;
