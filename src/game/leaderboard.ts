@@ -1,4 +1,10 @@
+import { onlineClient } from './net';
 import { DifficultyId, HeroId } from './types';
+
+function getLeaderboardApiUrl(): string {
+  const base = onlineClient.getHttpBaseUrl();
+  return base ? `${base}/api/leaderboard` : '/api/leaderboard';
+}
 
 export type LeaderboardMode = '1p' | '2p' | 'online';
 
@@ -87,7 +93,7 @@ export async function fetchLeaderboard(): Promise<{
   fromServer: boolean;
 }> {
   try {
-    const res = await fetch('/api/leaderboard', {
+    const res = await fetch(getLeaderboardApiUrl(), {
       method: 'GET',
       headers: { Accept: 'application/json' },
       cache: 'no-store',
@@ -120,7 +126,7 @@ export async function submitLeaderboardScore(
   const normalizedHeroes: HeroId[] = payload.heroes.length > 0 ? payload.heroes.slice(0, 2) : ['vadek'];
 
   try {
-    const res = await fetch('/api/leaderboard', {
+    const res = await fetch(getLeaderboardApiUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({

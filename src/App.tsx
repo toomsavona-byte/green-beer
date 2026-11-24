@@ -63,6 +63,8 @@ export default function App() {
 
   // Online 2P Co-Op State
   const [onlineConnected, setOnlineConnected] = useState<boolean>(false);
+  const [onlineStatusDetail, setOnlineStatusDetail] = useState<string | null>(null);
+  const [onlineServerUrl, setOnlineServerUrl] = useState<string>(() => onlineClient.getEffectiveServerDisplay());
   const [onlineRoom, setOnlineRoom] = useState<OnlineRoomSnapshot | null>(null);
   const [onlineRole, setOnlineRole] = useState<OnlineRole | null>(null);
   const [openRooms, setOpenRooms] = useState<PublicRoomInfo[]>([]);
@@ -363,8 +365,9 @@ export default function App() {
   // Wire Online 2P Co-Op WebSocket listeners
   useEffect(() => {
     onlineClient.setListeners({
-      onStatus: (connected) => {
+      onStatus: (connected, detail) => {
         setOnlineConnected(connected);
+        setOnlineStatusDetail(detail ?? null);
       },
       onRoomList: (rooms) => {
         setOpenRooms(rooms);
@@ -475,9 +478,23 @@ export default function App() {
   const handleOpenOnlineLobby = useCallback(() => {
     setOnlineError(null);
     setPeerNotice(null);
+    setOnlineServerUrl(onlineClient.getEffectiveServerDisplay());
     onlineClient.connect();
+    setOnlineConnected(onlineClient.isConnected());
     onlineClient.requestRoomList();
     setScreen('ONLINE_LOBBY');
+  }, []);
+
+  const handleChangeOnlineServerUrl = useCallback((url: string) => {
+    setOnlineError(null);
+    const effective = onlineClient.setCustomServerUrl(url);
+    setOnlineServerUrl(effective);
+    onlineClient.forceReconnect();
+  }, []);
+
+  const handleReconnectOnline = useCallback(() => {
+    setOnlineError(null);
+    onlineClient.forceReconnect();
   }, []);
 
   const handleCreateRoom = useCallback(() => {
@@ -752,11 +769,15 @@ export default function App() {
       <>
         <OnlineLobby
           connected={onlineConnected}
+          statusDetail={onlineStatusDetail}
+          serverUrl={onlineServerUrl}
           room={onlineRoom}
           role={onlineRole}
           openRooms={openRooms}
           errorMsg={onlineError}
           settings={settings}
+          onChangeServerUrl={handleChangeOnlineServerUrl}
+          onReconnect={handleReconnectOnline}
           onBack={() => {
             onlineClient.disconnect();
             setOnlineRoom(null);

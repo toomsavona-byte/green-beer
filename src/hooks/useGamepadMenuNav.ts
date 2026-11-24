@@ -89,9 +89,9 @@ function readSnapshot(pads: Gamepad[], gpMap: GamepadControlMap, padIndex?: numb
     if (ax > 0.52 || isBtnPressed(pad, 15) || isGamepadBindingActive(pad, gpMap.right)) snap.right = true;
 
     // Universal console/Android menu buttons:
-    // A / ✕ (0) = Confirm, B / ○ (1) = Back, X/□ (2) or Y/△ (3) = Alt, LB (4) / RB (5) = Tabs, START (9) or mapped pause = Start
-    if (isBtnPressed(pad, 0)) snap.confirm = true;
-    if (isBtnPressed(pad, 1)) snap.back = true;
+    // A / ○ (1) = Confirm, B / ✕ (0) = Back, Y/□ (2) or X/△ (3) = Alt, LB (4) / RB (5) = Tabs, START (9) or mapped pause = Start
+    if (isBtnPressed(pad, 1)) snap.confirm = true;
+    if (isBtnPressed(pad, 0)) snap.back = true;
     if (isBtnPressed(pad, 9) || isGamepadBindingActive(pad, gpMap.pause)) snap.start = true;
     if (isBtnPressed(pad, 2) || isBtnPressed(pad, 3)) snap.alt = true;
     if (isBtnPressed(pad, 4)) snap.prevTab = true;

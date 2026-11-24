@@ -104,7 +104,7 @@ export interface NetGameMeta {
 }
 
 type NetListeners = {
-  onStatus?: (connected: boolean) => void;
+  onStatus?: (connected: boolean, detail?: string | null) => void;
   onRoomState?: (room: OnlineRoomSnapshot, role: OnlineRole) => void;
   onRoomList?: (rooms: PublicRoomInfo[]) => void;
   onError?: (message: string) => void;
@@ -115,54 +115,237 @@ type NetListeners = {
   onCutsceneSync?: (lineIndex: number) => void;
 };
 
+const CUSTOM_SERVER_KEY = 'green_beer_pizedes_server_url_v1';
+
+function isPlainHttpHost(hostPart: string): boolean {
+  const hostOnly = hostPart.split('/')[0].toLowerCase();
+  if (hostOnly.startsWith('localhost') || hostOnly.startsWith('127.0.0.1')) return true;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/.test(hostOnly)) return true;
+  if (/:\d+$/.test(hostOnly) && !hostOnly.endsWith(':443')) return true;
+  return false;
+}
+
+function normalizeBaseHttpUrl(rawInput: string): string {
+  let cleaned = rawInput.trim().replace(/\s+/g, '').replace(/\/+$/, '');
+  if (!cleaned) return '';
+  if (cleaned.endsWith('/ws')) {
+    cleaned = cleaned.slice(0, -3).replace(/\/+$/, '');
+  }
+  if (cleaned.startsWith('ws://')) {
+    return `http://${cleaned.slice('ws://'.length)}`;
+  }
+  if (cleaned.startsWith('wss://')) {
+    return `https://${cleaned.slice('wss://'.length)}`;
+  }
+  if (cleaned.startsWith('http://') || cleaned.startsWith('https://')) {
+    return cleaned;
+  }
+  const proto = isPlainHttpHost(cleaned) ? 'http://' : 'https://';
+  return `${proto}${cleaned}`;
+}
+
+function httpToWsUrl(httpBase: string): string {
+  const cleaned = httpBase.replace(/\/+$/, '');
+  if (cleaned.startsWith('https://')) {
+    return `wss://${cleaned.slice('https://'.length)}/ws`;
+  }
+  if (cleaned.startsWith('http://')) {
+    return `ws://${cleaned.slice('http://'.length)}/ws`;
+  }
+  return `${isPlainHttpHost(cleaned) ? 'ws' : 'wss'}://${cleaned}/ws`;
+}
+
 class OnlineClient {
   private ws: WebSocket | null = null;
   private listeners: NetListeners = {};
   private reconnectTimer: number | null = null;
+  private connectWatchdog: number | null = null;
+  private pingTimer: number | null = null;
   private shouldStayConnected = false;
+  private lastStatusDetail: string | null = null;
+  private pendingOnOpen: unknown[] = [];
 
-  private resolveWsUrl(): string {
-    const raw = (import.meta.env.VITE_SERVER_URL as string | undefined)?.trim();
-    if (raw) {
-      const cleaned = raw.replace(/\/+$/, '');
-      if (cleaned.startsWith('ws://') || cleaned.startsWith('wss://')) {
-        return cleaned.endsWith('/ws') ? cleaned : `${cleaned}/ws`;
-      }
-      if (cleaned.startsWith('https://')) {
-        const hostPath = cleaned.slice('https://'.length);
-        return hostPath.endsWith('/ws') ? `wss://${hostPath}` : `wss://${hostPath}/ws`;
-      }
-      if (cleaned.startsWith('http://')) {
-        const hostPath = cleaned.slice('http://'.length);
-        return hostPath.endsWith('/ws') ? `ws://${hostPath}` : `ws://${hostPath}/ws`;
-      }
-      return `wss://${cleaned}/ws`;
+  constructor() {
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => {
+        if (this.shouldStayConnected && !this.isConnected()) {
+          this.forceReconnect();
+        }
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && this.shouldStayConnected && !this.isConnected()) {
+          this.forceReconnect();
+        }
+      });
     }
+  }
+
+  public getEnvServerUrl(): string {
+    const raw = (import.meta.env.VITE_SERVER_URL as string | undefined)?.trim() ?? '';
+    return raw ? normalizeBaseHttpUrl(raw) : '';
+  }
+
+  public getCustomServerUrl(): string {
+    try {
+      const saved = window.localStorage.getItem(CUSTOM_SERVER_KEY)?.trim() ?? '';
+      return saved ? normalizeBaseHttpUrl(saved) : '';
+    } catch {
+      return '';
+    }
+  }
+
+  public setCustomServerUrl(rawUrl: string): string {
+    const normalized = normalizeBaseHttpUrl(rawUrl);
+    try {
+      if (normalized) {
+        window.localStorage.setItem(CUSTOM_SERVER_KEY, normalized);
+      } else {
+        window.localStorage.removeItem(CUSTOM_SERVER_KEY);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    if (this.shouldStayConnected) {
+      this.forceReconnect();
+    }
+    return this.getEffectiveServerDisplay();
+  }
+
+  public getHttpBaseUrl(): string {
+    const custom = this.getCustomServerUrl();
+    if (custom) return custom;
+    const envUrl = this.getEnvServerUrl();
+    if (envUrl) return envUrl;
+    if (typeof window !== 'undefined' && window.location.origin && window.location.origin !== 'null') {
+      return window.location.origin.replace(/\/+$/, '');
+    }
+    return '';
+  }
+
+  public getEffectiveServerDisplay(): string {
+    return this.getHttpBaseUrl() || 'localhost';
+  }
+
+  public getLastStatusDetail(): string | null {
+    return this.lastStatusDetail;
+  }
+
+  public resolveWsUrl(): string {
+    const custom = this.getCustomServerUrl();
+    if (custom) return httpToWsUrl(custom);
+    const envUrl = this.getEnvServerUrl();
+    if (envUrl) return httpToWsUrl(envUrl);
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${proto}//${window.location.host}/ws`;
   }
 
+  private clearTimers(): void {
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.connectWatchdog !== null) {
+      window.clearTimeout(this.connectWatchdog);
+      this.connectWatchdog = null;
+    }
+    if (this.pingTimer !== null) {
+      window.clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+
+  public forceReconnect(): void {
+    this.clearTimers();
+    const prev = this.ws;
+    this.ws = null;
+    if (prev) {
+      try {
+        prev.close();
+      } catch {
+        // Ignore
+      }
+    }
+    this.connect();
+  }
+
   public connect(): void {
     this.shouldStayConnected = true;
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.lastStatusDetail = null;
+      this.listeners.onStatus?.(true, null);
+      this.send({ type: 'room:list' });
       return;
     }
 
+    if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    this.clearTimers();
     const url = this.resolveWsUrl();
+
+    // Detect browser Mixed-Content block early so user gets clear feedback instead of silent WifiOff
+    const pageIsHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    const targetIsInsecureWs = url.startsWith('ws://') && !url.startsWith('ws://localhost') && !url.startsWith('ws://127.0.0.1');
+    if (pageIsHttps && targetIsInsecureWs) {
+      const msg = `Браузер на HTTPS блокирует подключение к ${url}. Откройте игру по HTTP или укажите HTTPS-адрес сервера.`;
+      this.lastStatusDetail = msg;
+      this.listeners.onStatus?.(false, msg);
+      return;
+    }
 
     try {
       const ws = new WebSocket(url);
       this.ws = ws;
 
+      // Abort hung CONNECTING sockets after 6s so reconnect loop recovers cleanly
+      this.connectWatchdog = window.setTimeout(() => {
+        if (this.ws === ws && ws.readyState === WebSocket.CONNECTING) {
+          this.lastStatusDetail = `Сервер не отвечает (${this.getEffectiveServerDisplay()})`;
+          this.listeners.onStatus?.(false, this.lastStatusDetail);
+          try {
+            ws.close();
+          } catch {
+            // Ignore
+          }
+        }
+      }, 6000);
+
       ws.onopen = () => {
-        this.listeners.onStatus?.(true);
+        if (this.ws !== ws) return;
+        if (this.connectWatchdog !== null) {
+          window.clearTimeout(this.connectWatchdog);
+          this.connectWatchdog = null;
+        }
+        this.lastStatusDetail = null;
+        this.listeners.onStatus?.(true, null);
         this.send({ type: 'room:list' });
+
+        // Flush any queued room create/join sent right before socket opened
+        if (this.pendingOnOpen.length > 0) {
+          const queued = this.pendingOnOpen.splice(0, this.pendingOnOpen.length);
+          for (const item of queued) {
+            this.send(item);
+          }
+        }
+
+        // Application-level keepalive ping every 20s for mobile NAT & reverse proxies
+        if (this.pingTimer !== null) window.clearInterval(this.pingTimer);
+        this.pingTimer = window.setInterval(() => {
+          if (this.ws === ws && ws.readyState === WebSocket.OPEN) {
+            this.send({ type: 'ping' });
+          }
+        }, 20000);
       };
 
       ws.onmessage = (ev) => {
+        if (this.ws !== ws) return;
         try {
           const msg = JSON.parse(String(ev.data)) as Record<string, unknown>;
           switch (msg.type) {
+            case 'pong':
+              break;
             case 'room:state':
               this.listeners.onRoomState?.(
                 msg.room as OnlineRoomSnapshot,
@@ -204,18 +387,33 @@ class OnlineClient {
       };
 
       ws.onclose = () => {
-        this.listeners.onStatus?.(false);
+        // Ignore close events from superseded sockets!
+        if (this.ws !== ws) return;
+        this.clearTimers();
         this.ws = null;
+        if (!this.lastStatusDetail) {
+          const isLocalApkOrigin =
+            typeof window !== 'undefined' &&
+            (window.location.hostname === 'localhost' || window.location.protocol === 'capacitor:') &&
+            !this.getCustomServerUrl() &&
+            !this.getEnvServerUrl();
+          this.lastStatusDetail = isLocalApkOrigin
+            ? 'Укажите адрес игрового сервера (например http://137.22.149.135:3002)'
+            : `Нет соединения с ${this.getEffectiveServerDisplay()}`;
+        }
+        this.listeners.onStatus?.(false, this.lastStatusDetail);
         if (this.shouldStayConnected) {
           this.scheduleReconnect();
         }
       };
 
       ws.onerror = () => {
-        // Handled cleanly by onclose
+        if (this.ws !== ws) return;
+        this.lastStatusDetail = `Не удалось подключиться к ${this.getEffectiveServerDisplay()}`;
       };
     } catch {
-      this.listeners.onStatus?.(false);
+      this.lastStatusDetail = `Ошибка адреса сервера (${url})`;
+      this.listeners.onStatus?.(false, this.lastStatusDetail);
       this.scheduleReconnect();
     }
   }
@@ -232,31 +430,45 @@ class OnlineClient {
 
   public disconnect(): void {
     this.shouldStayConnected = false;
-    if (this.reconnectTimer !== null) {
-      window.clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    if (this.ws) {
-      this.send({ type: 'room:leave' });
+    this.pendingOnOpen = [];
+    this.clearTimers();
+    const prev = this.ws;
+    this.ws = null;
+    if (prev) {
+      if (prev.readyState === WebSocket.OPEN) {
+        try {
+          prev.send(JSON.stringify({ type: 'room:leave' }));
+        } catch {
+          // Ignore
+        }
+      }
       try {
-        this.ws.close();
+        prev.close();
       } catch {
         // Ignore
       }
-      this.ws = null;
     }
+    this.listeners.onStatus?.(false, null);
   }
 
   public setListeners(partial: NetListeners): void {
     this.listeners = { ...this.listeners, ...partial };
+    if (partial.onStatus) {
+      partial.onStatus(this.isConnected(), this.isConnected() ? null : this.lastStatusDetail);
+    }
   }
 
   public isConnected(): boolean {
     return Boolean(this.ws && this.ws.readyState === WebSocket.OPEN);
   }
 
-  private send(payload: unknown): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+  private send(payload: unknown, queueIfConnecting = false): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      if (queueIfConnecting && this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+        this.pendingOnOpen.push(payload);
+      }
+      return;
+    }
     try {
       this.ws.send(JSON.stringify(payload));
     } catch {
@@ -274,11 +486,11 @@ class OnlineClient {
     levelId: LevelId;
     friendlyFire: boolean;
   }): void {
-    this.send({ type: 'room:create', ...opts });
+    this.send({ type: 'room:create', ...opts }, true);
   }
 
   public joinRoom(code: string): void {
-    this.send({ type: 'room:join', code });
+    this.send({ type: 'room:join', code }, true);
   }
 
   public leaveRoom(): void {

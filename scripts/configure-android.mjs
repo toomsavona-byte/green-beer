@@ -34,8 +34,32 @@ if (manifest.includes('android:usesCleartextTraffic=')) {
     '<application android:usesCleartextTraffic="true"'
   );
 }
+// 1b. Add explicit network_security_config.xml so Android 9+ WebViews allow cleartext ws:// and http:// to VPS IPs
+const xmlDir = path.join(androidRoot, 'app/src/main/res/xml');
+fs.mkdirSync(xmlDir, { recursive: true });
+fs.writeFileSync(
+  path.join(xmlDir, 'network_security_config.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
+`,
+  'utf8'
+);
+
+if (!manifest.includes('android:networkSecurityConfig=')) {
+  manifest = manifest.replace(
+    /<application\b/,
+    '<application android:networkSecurityConfig="@xml/network_security_config"'
+  );
+}
+
 fs.writeFileSync(manifestPath, manifest, 'utf8');
-console.log('✓ AndroidManifest.xml locked to sensorLandscape + cleartext WS enabled');
+console.log('✓ AndroidManifest.xml locked to sensorLandscape + cleartext WS & networkSecurityConfig enabled');
 
 // 2. Patch MainActivity.java for immersive sticky fullscreen & keep screen awake
 const mainActPath = path.join(

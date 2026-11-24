@@ -301,6 +301,16 @@ async function startServer() {
 
   const app = express();
   app.use(express.json({ limit: '32kb' }));
+  app.use('/api', (_req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+    if (_req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, rooms: rooms.size, leaderboardCount: leaderboardCache.length });
@@ -404,6 +414,12 @@ async function startServer() {
       if (!meta) return;
 
       switch (msg.type) {
+        case 'ping': {
+          meta.alive = true;
+          safeSend(ws, { type: 'pong' });
+          break;
+        }
+
         case 'room:list': {
           safeSend(ws, { type: 'room:list', rooms: getOpenRoomsList() });
           break;
@@ -449,7 +465,7 @@ async function startServer() {
 
         case 'room:join': {
           const rawCode = typeof msg.code === 'string' ? msg.code.trim().toUpperCase() : '';
-          if (!/^[A-Z2-9]{4}$/.test(rawCode)) {
+          if (!/^[A-Z0-9]{4}$/.test(rawCode)) {
             safeSend(ws, { type: 'room:error', message: 'Неверный формат кода (нужно 4 символа).' });
             return;
           }

@@ -515,7 +515,7 @@ export function CharacterSelect({
       {/* Single flat control hint */}
       <div className="text-center text-[11px] sm:text-xs text-[#94A3B8] font-mono-num shrink-0 hidden sm:block">
         {gamepadCount > 0
-          ? 'Джойстик: Стик / D-Pad выбор бойца · A/✕ подтвердить · B/○ назад · START сразу в бой'
+          ? 'Джойстик: Стик / D-Pad выбор бойца · A/○ подтвердить · B/✕ назад · START сразу в бой'
           : isTouchDevice
             ? 'Нажмите на карточку бойца для просмотра и нажмите «В БОЙ!» для старта'
             : `P1: WASD + J выбрать (или двойной клик) · ${

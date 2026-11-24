@@ -73,19 +73,19 @@ export const DEFAULT_GAMEPAD: GamepadControlMap = {
   down: { type: 'button', index: 13 },
   left: { type: 'button', index: 14 },
   right: { type: 'button', index: 15 },
-  jump: { type: 'button', index: 0 },
-  shoot: { type: 'button', index: 1 },
-  melee: { type: 'button', index: 2 },
-  swap: { type: 'button', index: 3 },
-  pause: { type: 'button', index: 9 },
+  shoot: { type: 'button', index: 0 }, // B / ✕
+  jump: { type: 'button', index: 1 }, // A / ○
+  melee: { type: 'button', index: 2 }, // Y / □
+  swap: { type: 'button', index: 3 }, // X / △
+  pause: { type: 'button', index: 9 }, // START
 };
 
 export const GAMEPAD_PRESET_SHOOTER: GamepadControlMap = {
   ...DEFAULT_GAMEPAD,
-  jump: { type: 'button', index: 0 }, // A / ✕
-  melee: { type: 'button', index: 2 }, // X / □
+  jump: { type: 'button', index: 1 }, // A / ○
+  melee: { type: 'button', index: 2 }, // Y / □
   shoot: { type: 'button', index: 7 }, // RT / R2
-  swap: { type: 'button', index: 3 }, // Y / △
+  swap: { type: 'button', index: 3 }, // X / △
   pause: { type: 'button', index: 9 }, // START
 };
 
@@ -227,10 +227,10 @@ export function formatKeyCode(code: string): string {
 }
 
 const GAMEPAD_BUTTON_LABELS: Record<number, string> = {
-  0: 'A / ✕',
-  1: 'B / ○',
-  2: 'X / □',
-  3: 'Y / △',
+  0: 'B / ✕',
+  1: 'A / ○',
+  2: 'Y / □',
+  3: 'X / △',
   4: 'LB / L1',
   5: 'RB / R1',
   6: 'LT / L2',

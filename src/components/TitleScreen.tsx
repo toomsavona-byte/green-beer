@@ -765,7 +765,7 @@ export function TitleScreen({
         <div className="text-[11px] sm:text-xs text-[#94A3B8] font-mono-num tracking-wide text-center">
           {gamepadCount > 0 ? (
             <>
-              Джойстик ({gamepadCount}): Стик/D-Pad навигация · A/✕ выбрать · B/○ назад · START в бой · В бою:{' '}
+              Джойстик ({gamepadCount}): Стик/D-Pad навигация · A/○ выбрать · B/✕ назад · START в бой · В бою:{' '}
               {formatGamepadBinding(settings.controls.gamepad.shoot)} Огонь ·{' '}
               {formatGamepadBinding(settings.controls.gamepad.melee)} Удар ·{' '}
               {formatGamepadBinding(settings.controls.gamepad.jump)} Прыжок

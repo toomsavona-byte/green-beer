@@ -334,7 +334,7 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
     };
   }, [leaderboardOpen, onToggleMute, triggerHorn]);
 
-  // Gamepad buttons in Endless Finale: A/✕ honks horn, X/Y toggles HUD, B/○ or START returns to title
+  // Gamepad buttons in Endless Finale: A/○ honks horn, X/Y toggles HUD, B/✕ or START returns to title
   useGamepadMenuNav({
     enabled: !inputFocused && !leaderboardOpen,
     gamepadBindings,

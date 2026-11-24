@@ -488,7 +488,7 @@ export function ControlsModal({
                     onClick={() => applyGamepadPreset('classic')}
                     className={`px-2.5 py-1 bg-[#141A24] border border-[#2B3648] hover:border-[#39FF14] text-[11px] font-mono-num text-[#E6EDF3] cursor-pointer ${focusRing('preset:classic')}`}
                   >
-                    SEGA КЛАССИКА (B Огонь)
+                    SEGA КЛАССИКА (B/✕ Огонь)
                   </button>
                   <button
                     type="button"
@@ -597,7 +597,7 @@ export function ControlsModal({
 
           <p className="text-[11px] font-mono-num text-[#94A3B8]">
             {tab === 'gamepad'
-              ? 'Поддерживаются кнопки, триггеры (LT/RT/L2/R2) и крестовины любых Bluetooth/USB-геймпадов на ПК и Android. LB/RB меняют вкладки, B/○ закрывает окно.'
+              ? 'Поддерживаются кнопки, триггеры (LT/RT/L2/R2) и крестовины любых Bluetooth/USB-геймпадов на ПК и Android. LB/RB меняют вкладки, B/✕ закрывает окно.'
               : 'Нажмите на строку действия, затем нажмите нужную клавишу. Дубликаты внутри одного игрока меняются местами автоматически. ESC всегда открывает паузу.'}
           </p>
         </div>

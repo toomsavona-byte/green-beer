@@ -13,13 +13,45 @@ import {
 } from '../game/types';
 import { useGamepadMenuNav } from '../hooks/useGamepadMenuNav';
 
+const CYRILLIC_LOOKALIKES: Record<string, string> = {
+  А: 'A',
+  В: 'B',
+  Е: 'E',
+  К: 'K',
+  М: 'M',
+  Н: 'H',
+  О: 'O',
+  Р: 'P',
+  С: 'C',
+  Т: 'T',
+  У: 'Y',
+  Х: 'X',
+};
+
+function sanitizeRoomCodeInput(raw: string): string {
+  const upper = raw.toUpperCase();
+  let out = '';
+  for (const ch of upper) {
+    const mapped = CYRILLIC_LOOKALIKES[ch] ?? ch;
+    if (/[A-Z0-9]/.test(mapped)) {
+      out += mapped;
+      if (out.length >= 4) break;
+    }
+  }
+  return out;
+}
+
 interface OnlineLobbyProps {
   connected: boolean;
+  statusDetail: string | null;
+  serverUrl: string;
   room: OnlineRoomSnapshot | null;
   role: OnlineRole | null;
   openRooms: PublicRoomInfo[];
   errorMsg: string | null;
   settings: GameSettings;
+  onChangeServerUrl: (url: string) => void;
+  onReconnect: () => void;
   onBack: () => void;
   onCreateRoom: () => void;
   onJoinRoom: (code: string) => void;
@@ -37,11 +69,15 @@ interface OnlineLobbyProps {
 
 export function OnlineLobby({
   connected,
+  statusDetail,
+  serverUrl,
   room,
   role,
   openRooms,
   errorMsg,
   settings,
+  onChangeServerUrl,
+  onReconnect,
   onBack,
   onCreateRoom,
   onJoinRoom,
@@ -53,10 +89,16 @@ export function OnlineLobby({
   onStartOnlineGame,
 }: OnlineLobbyProps) {
   const [joinCode, setJoinCode] = useState('');
+  const [serverPanelOpen, setServerPanelOpen] = useState(false);
+  const [serverDraft, setServerDraft] = useState(serverUrl);
   const [copied, setCopied] = useState(false);
   const [gpNavActive, setGpNavActive] = useState(false);
   const [lobbyFocusIdx, setLobbyFocusIdx] = useState(0);
   const [roomHeroCursor, setRoomHeroCursor] = useState(0);
+
+  useEffect(() => {
+    setServerDraft(serverUrl);
+  }, [serverUrl]);
 
   const handleCopyCode = () => {
     if (!room) return;
@@ -225,7 +267,15 @@ export function OnlineLobby({
           </h1>
         </div>
 
-        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#141A24] border border-[#2B3648] font-mono-num text-[11px] shrink-0">
+        <button
+          type="button"
+          onClick={() => {
+            soundEngine.playMenuMove();
+            setServerPanelOpen((v) => !v);
+          }}
+          title="Настройка сервера подключения"
+          className="flex items-center gap-1.5 px-2.5 py-1 bg-[#141A24] border border-[#2B3648] hover:border-[#00E5FF] font-mono-num text-[11px] shrink-0 cursor-pointer"
+        >
           {connected ? (
             <>
               <Wifi className="w-3.5 h-3.5 text-[#39FF14]" />
@@ -234,15 +284,87 @@ export function OnlineLobby({
           ) : (
             <>
               <WifiOff className="w-3.5 h-3.5 text-[#FF2A85]" />
-              <span className="text-[#FF2A85] hidden sm:inline">ПОДКЛЮЧЕНИЕ...</span>
+              <span className="text-[#FF2A85] hidden sm:inline">НЕТ СЕТИ · СЕРВЕР</span>
             </>
           )}
-        </div>
+        </button>
       </div>
 
       {/* Body */}
       <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4">
         <div className="max-w-5xl mx-auto flex flex-col gap-4">
+          {(!connected || serverPanelOpen) && (
+            <div
+              className={`border px-3.5 py-3 flex flex-col gap-2.5 ${
+                connected
+                  ? 'bg-[#0F1520] border-[#2B3648]'
+                  : 'bg-[#26111B] border-[#FF2A85]'
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-mono-num text-[#FECDD3] flex items-center gap-2">
+                  {connected ? (
+                    <Wifi className="w-4 h-4 text-[#39FF14] shrink-0" />
+                  ) : (
+                    <WifiOff className="w-4 h-4 text-[#FF2A85] shrink-0" />
+                  )}
+                  <span className={connected ? 'text-[#39FF14]' : 'text-[#FECDD3]'}>
+                    {connected
+                      ? `ПОДКЛЮЧЕНО К СЕРВЕРУ: ${serverUrl}`
+                      : statusDetail || `ПОДКЛЮЧЕНИЕ К ${serverUrl}...`}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playMenuMove();
+                    onReconnect();
+                  }}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-[#141A24] border border-[#FFB000] text-[#FFB000] hover:bg-[#2E2410] text-[11px] font-mono-num cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>ПЕРЕПОДКЛЮЧИТЬ</span>
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  soundEngine.playMenuConfirm();
+                  onChangeServerUrl(serverDraft);
+                }}
+                className="flex flex-wrap sm:flex-nowrap items-stretch gap-2"
+              >
+                <input
+                  type="text"
+                  value={serverDraft}
+                  onChange={(e) => setServerDraft(e.target.value)}
+                  placeholder="http://137.22.149.135:3002"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className="flex-1 min-w-[180px] bg-[#090C11] border border-[#2B3648] focus:border-[#00E5FF] outline-none px-3 py-1.5 font-mono-num text-xs text-white"
+                />
+                <button
+                  type="submit"
+                  className="px-3.5 py-1.5 bg-[#00E5FF] hover:bg-[#38EEFF] text-[#090C11] font-display font-bold text-xs tracking-wider cursor-pointer"
+                >
+                  ПОДКЛЮЧИТЬ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playMenuMove();
+                    onChangeServerUrl('');
+                  }}
+                  className="px-3 py-1.5 bg-[#141A24] border border-[#2B3648] hover:border-[#94A3B8] text-[#94A3B8] hover:text-white font-mono-num text-xs cursor-pointer"
+                >
+                  АВТО
+                </button>
+              </form>
+            </div>
+          )}
+
           {errorMsg && (
             <div className="bg-[#3B1520] border border-[#FF2A85] px-4 py-2.5 text-xs sm:text-sm font-mono-num text-[#FECDD3]">
               {errorMsg}
@@ -303,10 +425,13 @@ export function OnlineLobby({
                   <form
                     onSubmit={(e) => {
                       e.preventDefault();
-                      const clean = joinCode.trim().toUpperCase();
-                      if (clean.length === 4 && connected) {
+                      const clean = sanitizeRoomCodeInput(joinCode);
+                      if (clean.length === 4) {
                         soundEngine.unlock();
                         soundEngine.playMenuConfirm();
+                        if (!connected) {
+                          onReconnect();
+                        }
                         onJoinRoom(clean);
                       }
                     }}
@@ -316,13 +441,16 @@ export function OnlineLobby({
                       type="text"
                       value={joinCode}
                       maxLength={4}
-                      onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      onChange={(e) => setJoinCode(sanitizeRoomCodeInput(e.target.value))}
                       placeholder="КОД (напр. K7M2)"
                       className="flex-1 bg-[#090C11] border border-[#2B3648] focus:border-[#00E5FF] outline-none px-3 py-2.5 font-mono-num text-base sm:text-lg tracking-[0.28em] text-center text-white uppercase"
                     />
                     <button
                       type="submit"
-                      disabled={!connected || joinCode.trim().length !== 4}
+                      disabled={joinCode.trim().length !== 4}
                       className="px-5 min-h-[46px] bg-[#00E5FF] hover:bg-[#38EEFF] disabled:opacity-40 text-[#090C11] font-display font-bold text-sm sm:text-base tracking-wider cursor-pointer"
                     >
                       ВОЙТИ
