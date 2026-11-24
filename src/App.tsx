@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RotateCw, X } from 'lucide-react';
 import { CharacterSelect } from './components/CharacterSelect';
+import { ControlsModal } from './components/ControlsModal';
 import { CutsceneView } from './components/CutsceneView';
 import { EndlessFinaleView } from './components/EndlessFinaleView';
 import { GameHud } from './components/GameHud';
 import { GameModals } from './components/GameModals';
+import { IosFullscreenModal } from './components/IosFullscreenModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { OnlineLobby } from './components/OnlineLobby';
 import { TitleScreen } from './components/TitleScreen';
@@ -26,6 +28,7 @@ import {
   ScreenState,
   StageClearSummary,
 } from './game/types';
+import { useFullscreen } from './hooks/useFullscreen';
 import { usePlatform } from './hooks/usePlatform';
 
 export default function App() {
@@ -40,7 +43,11 @@ export default function App() {
     crtScanlines: initialSave.current.crtScanlines,
     muted: false,
     touchControlsMode: initialSave.current.touchControlsMode,
+    controls: initialSave.current.controls,
   });
+  const [controlsModalOpen, setControlsModalOpen] = useState<boolean>(false);
+  const controlsRef = useRef(settings.controls);
+  controlsRef.current = settings.controls;
   const [highScore, setHighScore] = useState<number>(initialSave.current.highScore);
   const [currentLevel, setCurrentLevel] = useState<LevelId>(1);
   const [selectedHeroes, setSelectedHeroes] = useState<HeroId[]>(['vadek']);
@@ -63,6 +70,7 @@ export default function App() {
   const platform = usePlatform(settings.touchControlsMode);
   const platformRef = useRef(platform);
   platformRef.current = platform;
+  const fullscreen = useFullscreen(platform.isTouchDevice);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<GameEngine | null>(null);
@@ -80,11 +88,51 @@ export default function App() {
     screen === 'STAGE_CLEAR' ||
     screen === 'GAME_OVER';
 
-  // Keep active engine synced with live platform scale & touch hints
+  // Keep active engine synced with live platform scale, touch hints & modal input lock
   useEffect(() => {
     engineRef.current?.setTouchHints(platform.showTouchControls);
     engineRef.current?.setRenderScale(platform.recommendedRenderScale);
   }, [platform.showTouchControls, platform.recommendedRenderScale]);
+
+  useEffect(() => {
+    engineRef.current?.setInputBlocked(controlsModalOpen || fullscreen.iosGuideOpen);
+  }, [controlsModalOpen, fullscreen.iosGuideOpen]);
+
+  // iOS Safari & Mobile Browser Edge-Swipe / Overscroll Guard during active gameplay
+  useEffect(() => {
+    if (screen !== 'PLAYING' && screen !== 'VICTORY') return;
+    if (controlsModalOpen || fullscreen.iosGuideOpen) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (!e.cancelable) return;
+      const target = e.target;
+      const isInteractiveBtn = target instanceof Element && Boolean(target.closest('button, a, input'));
+      for (let i = 0; i < e.touches.length; i++) {
+        const t = e.touches[i];
+        const nearHorizEdge = t.clientX < 32 || t.clientX > window.innerWidth - 32;
+        if (nearHorizEdge && !isInteractiveBtn) {
+          e.preventDefault();
+          return;
+        }
+      }
+      if (!isInteractiveBtn && target instanceof HTMLCanvasElement) {
+        e.preventDefault();
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (screen === 'PLAYING' && e.cancelable) {
+        e.preventDefault();
+      }
+    };
+
+    window.addEventListener('touchstart', onTouchStart, { passive: false });
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => {
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
+    };
+  }, [screen, controlsModalOpen, fullscreen.iosGuideOpen]);
 
   // Reset dismiss flag when rotating back to landscape
   useEffect(() => {
@@ -109,6 +157,10 @@ export default function App() {
       }
       if (partial.touchControlsMode !== undefined) {
         saveProgress({ touchControlsMode: partial.touchControlsMode });
+      }
+      if (partial.controls !== undefined) {
+        engineRef.current?.setControls(partial.controls);
+        saveProgress({ controls: partial.controls });
       }
       if (partial.muted !== undefined) {
         soundEngine.setMuted(partial.muted);
@@ -287,6 +339,7 @@ export default function App() {
           {
             renderScale: platformRef.current.recommendedRenderScale,
             touchHints: platformRef.current.showTouchControls,
+            controls: controlsRef.current,
           }
         );
         engineRef.current = engine;
@@ -635,6 +688,23 @@ export default function App() {
     setScreen('TITLE_MENU');
   }, [onlineRoom, onlineRole]);
 
+  const controlsModal = controlsModalOpen ? (
+    <ControlsModal
+      bindings={settings.controls}
+      isTouchDevice={platform.isTouchDevice}
+      gamepadCount={platform.gamepadCount}
+      onChange={(nextControls) => handleUpdateSettings({ controls: nextControls })}
+      onClose={() => setControlsModalOpen(false)}
+    />
+  ) : null;
+
+  const iosFullscreenModal = (
+    <IosFullscreenModal
+      open={fullscreen.iosGuideOpen}
+      onClose={fullscreen.closeIosGuide}
+    />
+  );
+
   if (screen === 'TITLE_MENU') {
     return (
       <>
@@ -644,7 +714,13 @@ export default function App() {
           showTouchControls={platform.showTouchControls}
           isTouchDevice={platform.isTouchDevice}
           gamepadCount={platform.gamepadCount}
+          controlsModalOpen={controlsModalOpen}
+          iosGuideOpen={fullscreen.iosGuideOpen}
+          canShowFullscreen={fullscreen.canShowButton}
+          isFullscreen={fullscreen.isFullscreen}
+          onToggleFullscreen={fullscreen.toggleFullscreen}
           onUpdateSettings={handleUpdateSettings}
+          onOpenControls={() => setControlsModalOpen(true)}
           onStart={() => setScreen('CHAR_SELECT')}
           onOpenOnlineLobby={handleOpenOnlineLobby}
           onPreviewFinale={() => {
@@ -652,6 +728,8 @@ export default function App() {
             setScreen('VICTORY');
           }}
         />
+        {controlsModal}
+        {iosFullscreenModal}
         <OfflineIndicator />
       </>
     );
@@ -699,6 +777,8 @@ export default function App() {
           startLevel={settings.startLevel}
           isTouchDevice={platform.isTouchDevice}
           isPortrait={platform.isPortrait}
+          gamepadBindings={settings.controls.gamepad}
+          gamepadCount={platform.gamepadCount}
           onRequestLandscape={requestLandscapeLock}
           onBack={() => setScreen('TITLE_MENU')}
           onConfirm={handleConfirmHeroes}
@@ -717,6 +797,7 @@ export default function App() {
           crtScanlines={settings.crtScanlines}
           isTouchDevice={platform.isTouchDevice}
           renderScale={platform.recommendedRenderScale}
+          gamepadBindings={settings.controls.gamepad}
           isOnlineGuest={onlineRole === 'guest'}
           syncLineIndex={onlineRole === 'guest' ? guestCutsceneLine : undefined}
           onLineChange={
@@ -739,9 +820,14 @@ export default function App() {
           muted={settings.muted}
           isTouchDevice={platform.isTouchDevice}
           renderScale={platform.recommendedRenderScale}
+          gamepadBindings={settings.controls.gamepad}
+          canShowFullscreen={fullscreen.canShowButton}
+          isFullscreen={fullscreen.isFullscreen}
+          onToggleFullscreen={fullscreen.toggleFullscreen}
           onToggleMute={handleToggleMute}
           onReturnTitle={handleReturnTitle}
         />
+        {iosFullscreenModal}
         <OfflineIndicator />
       </>
     );
@@ -765,6 +851,9 @@ export default function App() {
         hud={hud}
         muted={settings.muted}
         showTouchControls={platform.showTouchControls}
+        canShowFullscreen={fullscreen.canShowButton}
+        isFullscreen={fullscreen.isFullscreen}
+        onToggleFullscreen={fullscreen.toggleFullscreen}
         onToggleMute={handleToggleMute}
         onPause={handlePauseButton}
       />
@@ -814,6 +903,11 @@ export default function App() {
         score={hud?.totalScore ?? carryScore}
         highScore={highScore}
         stageSummary={stageSummary}
+        controlsModalOpen={controlsModalOpen}
+        iosGuideOpen={fullscreen.iosGuideOpen}
+        canShowFullscreen={fullscreen.canShowButton}
+        isFullscreen={fullscreen.isFullscreen}
+        onToggleFullscreen={fullscreen.toggleFullscreen}
         isOnlineGuest={onlineRole === 'guest'}
         onResume={handleResume}
         onRestartLevel={handleRestartLevel}
@@ -822,7 +916,10 @@ export default function App() {
         onNextStage={handleNextStage}
         onReturnTitle={handleReturnTitle}
         onUpdateSettings={handleUpdateSettings}
+        onOpenControls={() => setControlsModalOpen(true)}
       />
+      {controlsModal}
+      {iosFullscreenModal}
       <OfflineIndicator />
     </div>
   );

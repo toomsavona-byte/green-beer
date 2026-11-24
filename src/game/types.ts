@@ -1,3 +1,5 @@
+import { ControlBindings } from './controls';
+
 export type ScreenState =
   | 'TITLE_MENU'
   | 'ONLINE_LOBBY'
@@ -227,6 +229,7 @@ export interface GameSettings {
   crtScanlines: boolean;
   muted: boolean;
   touchControlsMode: TouchControlsMode;
+  controls: ControlBindings;
 }
 
 export interface SaveData {
@@ -236,6 +239,7 @@ export interface SaveData {
   friendlyFire: boolean;
   crtScanlines: boolean;
   touchControlsMode: TouchControlsMode;
+  controls: ControlBindings;
 }
 
 export interface PlayerHudInfo {

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Check, RotateCw } from 'lucide-react';
+import { GamepadControlMap } from '../game/controls';
 import { HEROES, LEVEL_MAP, WEAPON_MAP } from '../game/data';
 import { soundEngine } from '../game/audio';
 import { HeroId, LevelId } from '../game/types';
+import { useGamepadMenuNav } from '../hooks/useGamepadMenuNav';
 import { HeroCoverPortrait } from './HeroCoverPortrait';
 import { HeroPreviewCanvas } from './HeroPreviewCanvas';
 
@@ -11,6 +13,8 @@ interface CharacterSelectProps {
   startLevel: LevelId;
   isTouchDevice: boolean;
   isPortrait?: boolean;
+  gamepadBindings?: GamepadControlMap;
+  gamepadCount?: number;
   onRequestLandscape?: () => void;
   onBack: () => void;
   onConfirm: (selectedHeroes: HeroId[]) => void;
@@ -21,6 +25,8 @@ export function CharacterSelect({
   startLevel,
   isTouchDevice,
   isPortrait = false,
+  gamepadBindings,
+  gamepadCount = 0,
   onRequestLandscape,
   onBack,
   onConfirm,
@@ -102,6 +108,131 @@ export function CharacterSelect({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [players, p1Ready, p2Ready, onBack]);
+
+  const dualGamepadMode = players === 2 && gamepadCount >= 2;
+
+  // Gamepad 1 (or single controller for both P1 and P2 sequentially)
+  useGamepadMenuNav({
+    enabled: true,
+    gamepadBindings,
+    padIndex: dualGamepadMode ? 0 : undefined,
+    onLeft: () => {
+      soundEngine.unlock();
+      if (!p1Ready) {
+        soundEngine.playMenuMove();
+        setP1Idx((i) => (i + HEROES.length - 1) % HEROES.length);
+      } else if (players === 2 && !dualGamepadMode && !p2Ready) {
+        soundEngine.playMenuMove();
+        setP2Idx((i) => (i + HEROES.length - 1) % HEROES.length);
+      }
+    },
+    onRight: () => {
+      soundEngine.unlock();
+      if (!p1Ready) {
+        soundEngine.playMenuMove();
+        setP1Idx((i) => (i + 1) % HEROES.length);
+      } else if (players === 2 && !dualGamepadMode && !p2Ready) {
+        soundEngine.playMenuMove();
+        setP2Idx((i) => (i + 1) % HEROES.length);
+      }
+    },
+    onUp: () => {
+      soundEngine.unlock();
+      if (!p1Ready) {
+        soundEngine.playMenuMove();
+        setP1Idx((i) => (i + HEROES.length - 4) % HEROES.length);
+      } else if (players === 2 && !dualGamepadMode && !p2Ready) {
+        soundEngine.playMenuMove();
+        setP2Idx((i) => (i + HEROES.length - 4) % HEROES.length);
+      }
+    },
+    onDown: () => {
+      soundEngine.unlock();
+      if (!p1Ready) {
+        soundEngine.playMenuMove();
+        setP1Idx((i) => (i + 4) % HEROES.length);
+      } else if (players === 2 && !dualGamepadMode && !p2Ready) {
+        soundEngine.playMenuMove();
+        setP2Idx((i) => (i + 4) % HEROES.length);
+      }
+    },
+    onConfirm: () => {
+      soundEngine.unlock();
+      if (!p1Ready) {
+        soundEngine.playMenuConfirm();
+        setP1Ready(true);
+      } else if (players === 2 && !dualGamepadMode && !p2Ready) {
+        soundEngine.playMenuConfirm();
+        setP2Ready(true);
+      }
+    },
+    onBack: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      if (players === 2 && !dualGamepadMode && p2Ready) {
+        setP2Ready(false);
+      } else if (p1Ready) {
+        setP1Ready(false);
+      } else {
+        onBack();
+      }
+    },
+    onStart: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuConfirm();
+      if (players === 1) {
+        onConfirm([HEROES[p1Idx].id]);
+      } else {
+        onConfirm([HEROES[p1Idx].id, HEROES[p2Idx].id]);
+      }
+    },
+  });
+
+  // Independent Gamepad 2 in 2P Local Co-Op
+  useGamepadMenuNav({
+    enabled: dualGamepadMode,
+    gamepadBindings,
+    padIndex: 1,
+    onLeft: () => {
+      if (p2Ready) return;
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      setP2Idx((i) => (i + HEROES.length - 1) % HEROES.length);
+    },
+    onRight: () => {
+      if (p2Ready) return;
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      setP2Idx((i) => (i + 1) % HEROES.length);
+    },
+    onUp: () => {
+      if (p2Ready) return;
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      setP2Idx((i) => (i + HEROES.length - 4) % HEROES.length);
+    },
+    onDown: () => {
+      if (p2Ready) return;
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      setP2Idx((i) => (i + 4) % HEROES.length);
+    },
+    onConfirm: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuConfirm();
+      setP2Ready(true);
+    },
+    onBack: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      if (p2Ready) setP2Ready(false);
+    },
+    onStart: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuConfirm();
+      onConfirm([HEROES[p1Idx].id, HEROES[p2Idx].id]);
+    },
+  });
 
   const renderStatBar = (label: string, val: number, accent: string, compact = false) => (
     <div
@@ -383,11 +514,13 @@ export function CharacterSelect({
 
       {/* Single flat control hint */}
       <div className="text-center text-[11px] sm:text-xs text-[#94A3B8] font-mono-num shrink-0 hidden sm:block">
-        {isTouchDevice
-          ? 'Нажмите на карточку бойца для просмотра и нажмите «В БОЙ!» для старта'
-          : `P1: WASD + J выбрать (или двойной клик) · ${
-              players === 2 ? 'P2: Стрелки + Numpad 1 (;) · ПКМ выбирает P2 · ' : ''
-            }Кнопка «В БОЙ!» для мгновенного старта`}
+        {gamepadCount > 0
+          ? 'Джойстик: Стик / D-Pad выбор бойца · A/✕ подтвердить · B/○ назад · START сразу в бой'
+          : isTouchDevice
+            ? 'Нажмите на карточку бойца для просмотра и нажмите «В БОЙ!» для старта'
+            : `P1: WASD + J выбрать (или двойной клик) · ${
+                players === 2 ? 'P2: Стрелки + Numpad 1 (;) · ПКМ выбирает P2 · ' : ''
+              }Кнопка «В БОЙ!» для мгновенного старта`}
       </div>
     </div>
   );

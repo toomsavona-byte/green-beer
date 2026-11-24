@@ -1,4 +1,12 @@
 import { MusicTrack, soundEngine } from './audio';
+import {
+  ControlBindings,
+  DEFAULT_CONTROL_BINDINGS,
+  GamepadBinding,
+  getGamepadBindingKey,
+  isGamepadBindingActive,
+  normalizeControlBindings,
+} from './controls';
 import { DIFFICULTY_MAP, HERO_MAP, LEVEL_MAP, WEAPON_MAP, WEAPONS } from './data';
 import { NetFramePayload } from './net';
 import {
@@ -189,6 +197,7 @@ export type VirtualButtonAction = 'shoot' | 'melee' | 'jump' | 'swap';
 export interface EngineOptions {
   renderScale?: number;
   touchHints?: boolean;
+  controls?: ControlBindings;
 }
 
 export class GameEngine {
@@ -197,6 +206,9 @@ export class GameEngine {
   private callbacks: EngineCallbacks;
   private renderScale = 2;
   private touchHints = false;
+  private controls: ControlBindings = normalizeControlBindings(DEFAULT_CONTROL_BINDINGS);
+  private boundKeySet = new Set<string>();
+  private inputBlocked = false;
 
   private rafId: number | null = null;
   private lastTimestamp = 0;
@@ -212,8 +224,8 @@ export class GameEngine {
   private virtualHeld = new Set<VirtualButtonAction>();
   private virtualJustPressed = new Set<VirtualButtonAction>();
 
-  // Gamepad previous button edge state (for P1 & P2 Bluetooth/USB controllers)
-  private prevPadButtons: Record<number, boolean[]> = {};
+  // Gamepad previous binding edge state (supports both buttons & analog axes/triggers)
+  private prevPadBindings: Record<number, Record<string, boolean>> = {};
 
   private level!: LevelDef;
   private players: SimPlayer[] = [];
@@ -302,6 +314,7 @@ export class GameEngine {
     this.canvas = canvas;
     this.renderScale = options?.renderScale ?? 2;
     this.touchHints = Boolean(options?.touchHints);
+    this.setControls(options?.controls ?? DEFAULT_CONTROL_BINDINGS);
     this.canvas.width = Math.round(VIRTUAL_W * this.renderScale);
     this.canvas.height = Math.round(VIRTUAL_H * this.renderScale);
     const context = canvas.getContext('2d', { alpha: false });
@@ -324,36 +337,37 @@ export class GameEngine {
     document.removeEventListener('visibilitychange', this.handleVisibility);
   }
 
+  public setControls(bindings: ControlBindings): void {
+    this.controls = normalizeControlBindings(bindings);
+    const keys = new Set<string>([
+      'Space',
+      'Semicolon',
+      'Quote',
+      'Slash',
+      'Period',
+      ...Object.values(this.controls.p1Keyboard),
+      ...Object.values(this.controls.p2Keyboard),
+    ]);
+    this.boundKeySet = keys;
+  }
+
+  public setInputBlocked(blocked: boolean): void {
+    this.inputBlocked = blocked;
+    if (blocked) {
+      this.heldKeys.clear();
+      this.justPressedKeys.clear();
+      this.clearVirtualInput();
+    }
+  }
+
   private handleKeyDown = (e: KeyboardEvent): void => {
-    if (
-      [
-        'ArrowUp',
-        'ArrowDown',
-        'ArrowLeft',
-        'ArrowRight',
-        'Space',
-        'KeyW',
-        'KeyA',
-        'KeyS',
-        'KeyD',
-        'KeyJ',
-        'KeyK',
-        'KeyL',
-        'KeyI',
-        'Numpad1',
-        'Numpad2',
-        'Numpad3',
-        'Numpad4',
-        'Semicolon',
-        'Quote',
-        'Slash',
-        'Period',
-      ].includes(e.code)
-    ) {
+    if (this.inputBlocked) return;
+
+    if (this.boundKeySet.has(e.code)) {
       e.preventDefault();
     }
 
-    if ((e.code === 'Escape' || e.code === 'KeyP') && !e.repeat && this.running) {
+    if ((e.code === 'Escape' || e.code === this.controls.p1Keyboard.pause) && !e.repeat && this.running) {
       this.callbacks.onPauseToggle();
       return;
     }
@@ -701,8 +715,11 @@ export class GameEngine {
 
   private updateGuestClient(dt: number): void {
     this.guestInputTimer += dt;
-    // Guest uses primary local controls (WASD/JKL/I, Touch, or Gamepad 1) to drive P2 online!
+    // Guest uses primary local controls (custom P1 keys, Touch, or Gamepad 1) to drive P2 online!
     const ctrl = this.readLocalSlot1Controls();
+    const gp = this.controls.gamepad;
+    const pad = this.getConnectedPads()[0];
+    const p1 = this.controls.p1Keyboard;
     const input: RemoteInputState = {
       up: ctrl.up,
       down: ctrl.down,
@@ -710,10 +727,22 @@ export class GameEngine {
       right: ctrl.right,
       analogX: Math.round(ctrl.analogX * 100) / 100,
       analogY: Math.round(ctrl.analogY * 100) / 100,
-      melee: this.heldKeys.has('KeyJ') || this.virtualHeld.has('melee') || ctrl.melee,
-      jump: this.heldKeys.has('KeyK') || this.virtualHeld.has('jump') || ctrl.jump,
+      melee:
+        this.heldKeys.has(p1.melee) ||
+        this.virtualHeld.has('melee') ||
+        isGamepadBindingActive(pad, gp.melee) ||
+        ctrl.melee,
+      jump:
+        this.heldKeys.has(p1.jump) ||
+        this.virtualHeld.has('jump') ||
+        isGamepadBindingActive(pad, gp.jump) ||
+        ctrl.jump,
       shoot: ctrl.shoot,
-      swap: this.heldKeys.has('KeyI') || this.virtualHeld.has('swap') || ctrl.swap,
+      swap:
+        this.heldKeys.has(p1.swap) ||
+        this.virtualHeld.has('swap') ||
+        isGamepadBindingActive(pad, gp.swap) ||
+        ctrl.swap,
     };
     const key = `${input.up?1:0}${input.down?1:0}${input.left?1:0}${input.right?1:0}${input.melee?1:0}${input.jump?1:0}${input.shoot?1:0}${input.swap?1:0}:${Math.round(input.analogX*10)},${Math.round(input.analogY*10)}`;
     const edgeChanged = key !== this.lastGuestInputKey;
@@ -1170,16 +1199,19 @@ export class GameEngine {
     }
   }
 
-  private isPadButtonJustPressed(pad: Gamepad, btnIndex: number): boolean {
-    const cur = Boolean(pad.buttons[btnIndex]?.pressed);
-    const prev = Boolean(this.prevPadButtons[pad.index]?.[btnIndex]);
+  private isPadBindingJustPressed(pad: Gamepad | undefined, binding: GamepadBinding): boolean {
+    if (!pad) return false;
+    const key = getGamepadBindingKey(binding);
+    const cur = isGamepadBindingActive(pad, binding);
+    const prev = Boolean(this.prevPadBindings[pad.index]?.[key]);
     return cur && !prev;
   }
 
   private pollGamepadPause(): void {
+    if (this.inputBlocked) return;
     const pads = this.getConnectedPads();
     for (const pad of pads) {
-      if (this.isPadButtonJustPressed(pad, 9)) {
+      if (this.isPadBindingJustPressed(pad, this.controls.gamepad.pause)) {
         this.callbacks.onPauseToggle();
         break;
       }
@@ -1188,8 +1220,13 @@ export class GameEngine {
 
   private snapshotGamepadButtons(): void {
     const pads = this.getConnectedPads();
+    const gpBindings = Object.values(this.controls.gamepad);
     for (const pad of pads) {
-      this.prevPadButtons[pad.index] = pad.buttons.map((b) => Boolean(b.pressed));
+      const state: Record<string, boolean> = {};
+      for (const b of gpBindings) {
+        state[getGamepadBindingKey(b)] = isGamepadBindingActive(pad, b);
+      }
+      this.prevPadBindings[pad.index] = state;
     }
   }
 
@@ -1267,35 +1304,34 @@ export class GameEngine {
   private readLocalSlot1Controls() {
     const pads = this.getConnectedPads();
     const pad = pads[0];
+    const gp = this.controls.gamepad;
+    const p1 = this.controls.p1Keyboard;
+
     const padAxisX = pad && Math.abs(pad.axes[0] ?? 0) > 0.28 ? pad.axes[0] : 0;
     const padAxisY = pad && Math.abs(pad.axes[1] ?? 0) > 0.28 ? pad.axes[1] : 0;
-    const padUp = Boolean(pad?.buttons[12]?.pressed) || padAxisY < -0.28;
-    const padDown = Boolean(pad?.buttons[13]?.pressed) || padAxisY > 0.28;
-    const padLeft = Boolean(pad?.buttons[14]?.pressed) || padAxisX < -0.28;
-    const padRight = Boolean(pad?.buttons[15]?.pressed) || padAxisX > 0.28;
-    const padJump = pad ? this.isPadButtonJustPressed(pad, 0) : false;
-    const padMelee = pad ? this.isPadButtonJustPressed(pad, 2) : false;
-    const padShoot = Boolean(
-      pad && (pad.buttons[1]?.pressed || pad.buttons[5]?.pressed || pad.buttons[7]?.pressed)
-    );
-    const padSwap = pad
-      ? this.isPadButtonJustPressed(pad, 3) || this.isPadButtonJustPressed(pad, 4)
-      : false;
+    const padUp = isGamepadBindingActive(pad, gp.up) || padAxisY < -0.28;
+    const padDown = isGamepadBindingActive(pad, gp.down) || padAxisY > 0.28;
+    const padLeft = isGamepadBindingActive(pad, gp.left) || padAxisX < -0.28;
+    const padRight = isGamepadBindingActive(pad, gp.right) || padAxisX > 0.28;
+    const padJump = this.isPadBindingJustPressed(pad, gp.jump);
+    const padMelee = this.isPadBindingJustPressed(pad, gp.melee);
+    const padShoot = isGamepadBindingActive(pad, gp.shoot);
+    const padSwap = this.isPadBindingJustPressed(pad, gp.swap);
 
     const stickDead = 0.22;
     const vx = Math.abs(this.virtualStickX) > stickDead ? this.virtualStickX : 0;
     const vy = Math.abs(this.virtualStickY) > stickDead ? this.virtualStickY : 0;
     return {
-      up: this.heldKeys.has('KeyW') || vy < -stickDead || padUp,
-      down: this.heldKeys.has('KeyS') || vy > stickDead || padDown,
-      left: this.heldKeys.has('KeyA') || vx < -stickDead || padLeft,
-      right: this.heldKeys.has('KeyD') || vx > stickDead || padRight,
+      up: this.heldKeys.has(p1.up) || vy < -stickDead || padUp,
+      down: this.heldKeys.has(p1.down) || vy > stickDead || padDown,
+      left: this.heldKeys.has(p1.left) || vx < -stickDead || padLeft,
+      right: this.heldKeys.has(p1.right) || vx > stickDead || padRight,
       analogX: vx !== 0 ? vx : padAxisX,
       analogY: vy !== 0 ? vy : padAxisY,
-      melee: this.justPressedKeys.has('KeyJ') || this.virtualJustPressed.has('melee') || padMelee,
-      jump: this.justPressedKeys.has('KeyK') || this.virtualJustPressed.has('jump') || padJump,
-      shoot: this.heldKeys.has('KeyL') || this.virtualHeld.has('shoot') || padShoot,
-      swap: this.justPressedKeys.has('KeyI') || this.virtualJustPressed.has('swap') || padSwap,
+      melee: this.justPressedKeys.has(p1.melee) || this.virtualJustPressed.has('melee') || padMelee,
+      jump: this.justPressedKeys.has(p1.jump) || this.virtualJustPressed.has('jump') || padJump,
+      shoot: this.heldKeys.has(p1.shoot) || this.virtualHeld.has('shoot') || padShoot,
+      swap: this.justPressedKeys.has(p1.swap) || this.virtualJustPressed.has('swap') || padSwap,
     };
   }
 
@@ -1331,43 +1367,42 @@ export class GameEngine {
 
     const pads = this.getConnectedPads();
     const pad = pads[1];
+    const gp = this.controls.gamepad;
+    const p2 = this.controls.p2Keyboard;
+
     const padAxisX = pad && Math.abs(pad.axes[0] ?? 0) > 0.28 ? pad.axes[0] : 0;
     const padAxisY = pad && Math.abs(pad.axes[1] ?? 0) > 0.28 ? pad.axes[1] : 0;
-    const padUp = Boolean(pad?.buttons[12]?.pressed) || padAxisY < -0.28;
-    const padDown = Boolean(pad?.buttons[13]?.pressed) || padAxisY > 0.28;
-    const padLeft = Boolean(pad?.buttons[14]?.pressed) || padAxisX < -0.28;
-    const padRight = Boolean(pad?.buttons[15]?.pressed) || padAxisX > 0.28;
-    const padJump = pad ? this.isPadButtonJustPressed(pad, 0) : false;
-    const padMelee = pad ? this.isPadButtonJustPressed(pad, 2) : false;
-    const padShoot = Boolean(
-      pad && (pad.buttons[1]?.pressed || pad.buttons[5]?.pressed || pad.buttons[7]?.pressed)
-    );
-    const padSwap = pad
-      ? this.isPadButtonJustPressed(pad, 3) || this.isPadButtonJustPressed(pad, 4)
-      : false;
+    const padUp = isGamepadBindingActive(pad, gp.up) || padAxisY < -0.28;
+    const padDown = isGamepadBindingActive(pad, gp.down) || padAxisY > 0.28;
+    const padLeft = isGamepadBindingActive(pad, gp.left) || padAxisX < -0.28;
+    const padRight = isGamepadBindingActive(pad, gp.right) || padAxisX > 0.28;
+    const padJump = this.isPadBindingJustPressed(pad, gp.jump);
+    const padMelee = this.isPadBindingJustPressed(pad, gp.melee);
+    const padShoot = isGamepadBindingActive(pad, gp.shoot);
+    const padSwap = this.isPadBindingJustPressed(pad, gp.swap);
 
     return {
-      up: this.heldKeys.has('ArrowUp') || padUp,
-      down: this.heldKeys.has('ArrowDown') || padDown,
-      left: this.heldKeys.has('ArrowLeft') || padLeft,
-      right: this.heldKeys.has('ArrowRight') || padRight,
+      up: this.heldKeys.has(p2.up) || padUp,
+      down: this.heldKeys.has(p2.down) || padDown,
+      left: this.heldKeys.has(p2.left) || padLeft,
+      right: this.heldKeys.has(p2.right) || padRight,
       analogX: padAxisX,
       analogY: padAxisY,
       melee:
-        this.justPressedKeys.has('Numpad1') ||
-        this.justPressedKeys.has('Semicolon') ||
+        this.justPressedKeys.has(p2.melee) ||
+        (p2.melee === 'Numpad1' && this.justPressedKeys.has('Semicolon')) ||
         padMelee,
       jump:
-        this.justPressedKeys.has('Numpad2') ||
-        this.justPressedKeys.has('Quote') ||
+        this.justPressedKeys.has(p2.jump) ||
+        (p2.jump === 'Numpad2' && this.justPressedKeys.has('Quote')) ||
         padJump,
       shoot:
-        this.heldKeys.has('Numpad3') ||
-        this.heldKeys.has('Slash') ||
+        this.heldKeys.has(p2.shoot) ||
+        (p2.shoot === 'Numpad3' && this.heldKeys.has('Slash')) ||
         padShoot,
       swap:
-        this.justPressedKeys.has('Numpad4') ||
-        this.justPressedKeys.has('Period') ||
+        this.justPressedKeys.has(p2.swap) ||
+        (p2.swap === 'Numpad4' && this.justPressedKeys.has('Period')) ||
         padSwap,
     };
   }

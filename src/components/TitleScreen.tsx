@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Volume2, VolumeX } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Gamepad2, Maximize2, Minimize2, Volume2, VolumeX } from 'lucide-react';
+import { formatGamepadBinding, formatKeyCode } from '../game/controls';
 import { DIFFICULTIES, LEVELS, TITLE_ART_URL } from '../game/data';
 import { soundEngine } from '../game/audio';
 import { DifficultyId, GameSettings, LevelId, TouchControlsMode } from '../game/types';
+import { useGamepadMenuNav } from '../hooks/useGamepadMenuNav';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface TitleScreenProps {
@@ -11,11 +13,38 @@ interface TitleScreenProps {
   showTouchControls: boolean;
   isTouchDevice: boolean;
   gamepadCount: number;
+  controlsModalOpen?: boolean;
+  iosGuideOpen?: boolean;
+  canShowFullscreen?: boolean;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
   onUpdateSettings: (partial: Partial<GameSettings>) => void;
+  onOpenControls: () => void;
   onStart: () => void;
   onOpenOnlineLobby: () => void;
   onPreviewFinale: () => void;
 }
+
+type FocusItemId =
+  | '1p'
+  | '2p'
+  | 'online'
+  | 'start'
+  | 'diff_easy'
+  | 'diff_normal'
+  | 'diff_hard'
+  | 'controls'
+  | 'touch'
+  | 'ff'
+  | 'lvl_1'
+  | 'lvl_2'
+  | 'lvl_3'
+  | 'lvl_4'
+  | 'lvl_5'
+  | 'lvl_6'
+  | 'finale'
+  | 'fullscreen'
+  | 'mute';
 
 const TOUCH_MODE_LABELS: Record<TouchControlsMode, string> = {
   auto: 'АВТО',
@@ -29,14 +58,45 @@ export function TitleScreen({
   showTouchControls,
   isTouchDevice,
   gamepadCount,
+  controlsModalOpen = false,
+  iosGuideOpen = false,
+  canShowFullscreen = false,
+  isFullscreen = false,
+  onToggleFullscreen,
   onUpdateSettings,
+  onOpenControls,
   onStart,
   onOpenOnlineLobby,
   onPreviewFinale,
 }: TitleScreenProps) {
   const [imgFailed, setImgFailed] = useState(false);
+  const [focusRow, setFocusRow] = useState(0);
+  const [focusCol, setFocusCol] = useState(3); // Defaults to PRESS START
+  const [gpNavActive, setGpNavActive] = useState(gamepadCount > 0);
+
+  const navRows = useMemo<FocusItemId[][]>(
+    () => [
+      ['1p', '2p', 'online', 'start'],
+      ['diff_easy', 'diff_normal', 'diff_hard', 'controls', 'touch', 'ff'],
+      ['lvl_1', 'lvl_2', 'lvl_3', 'lvl_4', 'lvl_5', 'lvl_6', 'finale'],
+      canShowFullscreen && onToggleFullscreen ? ['fullscreen', 'mute'] : ['mute'],
+    ],
+    [canShowFullscreen, onToggleFullscreen]
+  );
+
+  const safeRow = Math.min(focusRow, navRows.length - 1);
+  const safeCol = Math.min(focusCol, navRows[safeRow].length - 1);
+  const focusedId: FocusItemId | null = gpNavActive ? navRows[safeRow][safeCol] : null;
+  const focusRing = (id: FocusItemId) => (focusedId === id ? 'gp-focus-ring' : '');
 
   useEffect(() => {
+    const clearGpHighlight = () => setGpNavActive(false);
+    window.addEventListener('pointerdown', clearGpHighlight, { passive: true });
+    return () => window.removeEventListener('pointerdown', clearGpHighlight);
+  }, []);
+
+  useEffect(() => {
+    if (controlsModalOpen || iosGuideOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Enter' || e.code === 'Space') {
         e.preventDefault();
@@ -55,7 +115,7 @@ export function TitleScreen({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onStart, onUpdateSettings]);
+  }, [controlsModalOpen, iosGuideOpen, onStart, onUpdateSettings]);
 
   const toggleMute = () => {
     const next = !settings.muted;
@@ -71,6 +131,118 @@ export function TitleScreen({
     const next = order[(order.indexOf(settings.touchControlsMode) + 1) % order.length];
     onUpdateSettings({ touchControlsMode: next });
   };
+
+  const activateFocusedItem = (id: FocusItemId) => {
+    soundEngine.unlock();
+    switch (id) {
+      case '1p':
+        soundEngine.playMenuMove();
+        onUpdateSettings({ players: 1 });
+        break;
+      case '2p':
+        soundEngine.playMenuMove();
+        onUpdateSettings({ players: 2 });
+        break;
+      case 'online':
+        soundEngine.playMenuConfirm();
+        onOpenOnlineLobby();
+        break;
+      case 'start':
+        soundEngine.playMenuConfirm();
+        onStart();
+        break;
+      case 'diff_easy':
+        soundEngine.playMenuMove();
+        onUpdateSettings({ difficulty: 'easy' });
+        break;
+      case 'diff_normal':
+        soundEngine.playMenuMove();
+        onUpdateSettings({ difficulty: 'normal' });
+        break;
+      case 'diff_hard':
+        soundEngine.playMenuMove();
+        onUpdateSettings({ difficulty: 'hard' });
+        break;
+      case 'controls':
+        soundEngine.playMenuMove();
+        onOpenControls();
+        break;
+      case 'touch':
+        cycleTouchMode();
+        break;
+      case 'ff':
+        soundEngine.playMenuMove();
+        onUpdateSettings({ friendlyFire: !settings.friendlyFire });
+        break;
+      case 'lvl_1':
+      case 'lvl_2':
+      case 'lvl_3':
+      case 'lvl_4':
+      case 'lvl_5':
+      case 'lvl_6': {
+        soundEngine.playMenuMove();
+        const lvl = Number(id.slice(4)) as LevelId;
+        onUpdateSettings({ startLevel: lvl });
+        break;
+      }
+      case 'finale':
+        soundEngine.playMenuConfirm();
+        onPreviewFinale();
+        break;
+      case 'fullscreen':
+        soundEngine.playMenuMove();
+        onToggleFullscreen?.();
+        break;
+      case 'mute':
+        toggleMute();
+        break;
+    }
+  };
+
+  useGamepadMenuNav({
+    enabled: !controlsModalOpen && !iosGuideOpen,
+    gamepadBindings: settings.controls.gamepad,
+    onActivity: () => setGpNavActive(true),
+    onLeft: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      const rowLen = navRows[safeRow].length;
+      setFocusCol((safeCol + rowLen - 1) % rowLen);
+    },
+    onRight: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      const rowLen = navRows[safeRow].length;
+      setFocusCol((safeCol + 1) % rowLen);
+    },
+    onUp: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      const nextRow = (safeRow + navRows.length - 1) % navRows.length;
+      setFocusRow(nextRow);
+      setFocusCol(Math.min(safeCol, navRows[nextRow].length - 1));
+    },
+    onDown: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      const nextRow = (safeRow + 1) % navRows.length;
+      setFocusRow(nextRow);
+      setFocusCol(Math.min(safeCol, navRows[nextRow].length - 1));
+    },
+    onConfirm: () => {
+      if (!gpNavActive) {
+        setGpNavActive(true);
+        activateFocusedItem('start');
+        return;
+      }
+      activateFocusedItem(navRows[safeRow][safeCol]);
+    },
+    onStart: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuConfirm();
+      onStart();
+    },
+  });
 
   return (
     <div className="relative w-screen h-[100dvh] overflow-y-auto overflow-x-hidden bg-[#090C11] flex flex-col justify-between safe-area-inset">
@@ -113,11 +285,26 @@ export function TitleScreen({
 
         <div className="flex items-center gap-2 shrink-0">
           <PWAInstallButton />
+          {canShowFullscreen && onToggleFullscreen && (
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.unlock();
+                soundEngine.playMenuMove();
+                onToggleFullscreen();
+              }}
+              aria-label={isFullscreen ? 'Выйти из полного экрана' : 'Развернуть на полный экран'}
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 min-h-[40px] sm:min-h-0 sm:py-1.5 bg-[#10272E]/92 border border-[#00E5FF] text-xs font-mono-num text-[#00E5FF] hover:bg-[#00E5FF] hover:text-[#090C11] transition-colors cursor-pointer whitespace-nowrap shrink-0 ${focusRing('fullscreen')}`}
+            >
+              {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+              <span className="hidden sm:inline">{isFullscreen ? 'СВЕРНУТЬ' : 'ПОЛНЫЙ ЭКРАН'}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={toggleMute}
             aria-label={settings.muted ? 'Включить звук' : 'Выключить звук'}
-            className="flex items-center gap-2 px-3 min-h-[40px] sm:min-h-0 sm:py-1.5 bg-[#141A24]/90 border border-[#2B3648] text-xs font-mono-num text-[#E6EDF3] hover:border-[#39FF14] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            className={`flex items-center gap-2 px-3 min-h-[40px] sm:min-h-0 sm:py-1.5 bg-[#141A24]/90 border border-[#2B3648] text-xs font-mono-num text-[#E6EDF3] hover:border-[#39FF14] transition-colors cursor-pointer whitespace-nowrap shrink-0 ${focusRing('mute')}`}
           >
             {settings.muted ? <VolumeX className="w-4 h-4 text-[#FF2A85]" /> : <Volume2 className="w-4 h-4 text-[#39FF14]" />}
             <span className="hidden sm:inline">{settings.muted ? 'ЗВУК ВЫКЛ' : 'ЗВУК ВКЛ'}</span>
@@ -217,7 +404,7 @@ export function TitleScreen({
                   settings.players === 1
                     ? 'bg-[#39FF14] text-[#090C11] border-[#39FF14]'
                     : 'bg-[#141A24] text-[#CBD5E1] border-[#2B3648] hover:border-[#39FF14]'
-                }`}
+                } ${focusRing('1p')}`}
               >
                 1 PLAYER
               </button>
@@ -232,7 +419,7 @@ export function TitleScreen({
                   settings.players === 2
                     ? 'bg-[#00E5FF] text-[#090C11] border-[#00E5FF]'
                     : 'bg-[#141A24] text-[#CBD5E1] border-[#2B3648] hover:border-[#00E5FF]'
-                }`}
+                } ${focusRing('2p')}`}
               >
                 2P ЛОКАЛЬНО
               </button>
@@ -243,7 +430,7 @@ export function TitleScreen({
                   soundEngine.playMenuConfirm();
                   onOpenOnlineLobby();
                 }}
-                className="px-3 sm:px-3.5 min-h-[42px] sm:min-h-0 sm:py-2 text-xs sm:text-sm font-display font-bold tracking-wider border bg-[#10272E] text-[#00E5FF] border-[#00E5FF] hover:bg-[#00E5FF] hover:text-[#090C11] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                className={`px-3 sm:px-3.5 min-h-[42px] sm:min-h-0 sm:py-2 text-xs sm:text-sm font-display font-bold tracking-wider border bg-[#10272E] text-[#00E5FF] border-[#00E5FF] hover:bg-[#00E5FF] hover:text-[#090C11] transition-colors cursor-pointer whitespace-nowrap shrink-0 ${focusRing('online')}`}
               >
                 ОНЛАЙН 2P
               </button>
@@ -256,7 +443,7 @@ export function TitleScreen({
                 soundEngine.playMenuConfirm();
                 onStart();
               }}
-              className="flex-1 sm:flex-initial px-5 sm:px-7 min-h-[44px] sm:min-h-0 sm:py-2.5 bg-[#FF2A85] hover:bg-[#FF4696] text-white font-display font-bold text-sm sm:text-base tracking-widest border border-[#FF85B8] transition-transform active:scale-95 cursor-pointer whitespace-nowrap shrink-0"
+              className={`flex-1 sm:flex-initial px-5 sm:px-7 min-h-[44px] sm:min-h-0 sm:py-2.5 bg-[#FF2A85] hover:bg-[#FF4696] text-white font-display font-bold text-sm sm:text-base tracking-widest border border-[#FF85B8] transition-transform active:scale-95 cursor-pointer whitespace-nowrap shrink-0 ${focusRing('start')}`}
             >
               PRESS START · ВЫБОР БОЙЦОВ
             </button>
@@ -288,7 +475,7 @@ export function TitleScreen({
                       active
                         ? activeStyle
                         : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
-                    }`}
+                    } ${focusRing(`diff_${diff.id}` as FocusItemId)}`}
                   >
                     {diff.label}
                   </button>
@@ -299,12 +486,25 @@ export function TitleScreen({
             <div className="flex items-center gap-1.5 flex-wrap">
               <button
                 type="button"
+                onClick={() => {
+                  soundEngine.unlock();
+                  soundEngine.playMenuMove();
+                  onOpenControls();
+                }}
+                className={`flex items-center gap-1.5 px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-[11px] sm:text-xs font-mono-num font-bold border bg-[#1F2D22] text-[#39FF14] border-[#39FF14] hover:bg-[#39FF14] hover:text-[#090C11] transition-colors cursor-pointer whitespace-nowrap shrink-0 ${focusRing('controls')}`}
+              >
+                <Gamepad2 className="w-3.5 h-3.5" />
+                КНОПКИ
+              </button>
+
+              <button
+                type="button"
                 onClick={cycleTouchMode}
                 className={`px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-[11px] sm:text-xs font-mono-num border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                   showTouchControls
                     ? 'bg-[#10272E] text-[#00E5FF] border-[#00E5FF]'
                     : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
-                }`}
+                } ${focusRing('touch')}`}
               >
                 СЕНСОР: {TOUCH_MODE_LABELS[settings.touchControlsMode]}
               </button>
@@ -320,14 +520,14 @@ export function TitleScreen({
                   settings.friendlyFire
                     ? 'bg-[#3B1520] text-[#FF2A85] border-[#FF2A85]'
                     : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
-                }`}
+                } ${focusRing('ff')}`}
               >
                 FF: {settings.friendlyFire ? 'ВКЛ' : 'ВЫКЛ'}
               </button>
             </div>
           </div>
 
-          {/* Row 3: Level Select (1–5) */}
+          {/* Row 3: Level Select (1–6) */}
           <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-[#1E293B]">
             <span className="text-[11px] sm:text-xs text-[#94A3B8] mr-0.5 font-mono-num">УРОВЕНЬ:</span>
             {LEVELS.map((lvl) => (
@@ -343,7 +543,7 @@ export function TitleScreen({
                   settings.startLevel === lvl.id
                     ? 'bg-[#1F2D22] text-[#39FF14] border-[#39FF14]'
                     : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
-                }`}
+                } ${focusRing(`lvl_${lvl.id}` as FocusItemId)}`}
               >
                 {lvl.shortName}
               </button>
@@ -355,7 +555,7 @@ export function TitleScreen({
                 soundEngine.playMenuConfirm();
                 onPreviewFinale();
               }}
-              className="px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-[11px] sm:text-xs font-mono-num font-bold border border-[#FF40A8] bg-[#2D1028] text-[#FEF08A] hover:bg-[#FF40A8] hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              className={`px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-[11px] sm:text-xs font-mono-num font-bold border border-[#FF40A8] bg-[#2D1028] text-[#FEF08A] hover:bg-[#FF40A8] hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0 ${focusRing('finale')}`}
             >
               ★ ФИНАЛ
             </button>
@@ -364,15 +564,30 @@ export function TitleScreen({
 
         {/* Dynamic Platform Control Hint Line */}
         <div className="text-[11px] sm:text-xs text-[#94A3B8] font-mono-num tracking-wide text-center">
-          {showTouchControls || isTouchDevice ? (
+          {gamepadCount > 0 ? (
             <>
-              Сенсорный геймпад: левый стик (8 напр.) · ОГОНЬ · УДАР · ПРЫЖОК · СТВОЛ
-              {gamepadCount > 0 ? ` · Подключено геймпадов: ${gamepadCount}` : ' · Поддержка Bluetooth-геймпадов'}
+              Джойстик ({gamepadCount}): Стик/D-Pad навигация · A/✕ выбрать · START в бой · В бою:{' '}
+              {formatGamepadBinding(settings.controls.gamepad.shoot)} Огонь ·{' '}
+              {formatGamepadBinding(settings.controls.gamepad.melee)} Удар ·{' '}
+              {formatGamepadBinding(settings.controls.gamepad.jump)} Прыжок
+            </>
+          ) : showTouchControls || isTouchDevice ? (
+            <>
+              Сенсор: стик · ОГОНЬ · УДАР · ПРЫЖОК · СТВОЛ · Джойстик:{' '}
+              {formatGamepadBinding(settings.controls.gamepad.shoot)} Огонь ·{' '}
+              {formatGamepadBinding(settings.controls.gamepad.melee)} Удар ·{' '}
+              {formatGamepadBinding(settings.controls.gamepad.jump)} Прыжок
             </>
           ) : (
             <>
-              P1: WASD · J Удар · K Прыжок · L Огонь · I Ствол · P2: Стрелки + Num 1/2/3/4 (; &apos; / .) · Esc Пауза
-              {gamepadCount > 0 ? ` · Геймпадов: ${gamepadCount}` : ''}
+              P1: {formatKeyCode(settings.controls.p1Keyboard.up)}
+              {formatKeyCode(settings.controls.p1Keyboard.left)}
+              {formatKeyCode(settings.controls.p1Keyboard.down)}
+              {formatKeyCode(settings.controls.p1Keyboard.right)} ·{' '}
+              {formatKeyCode(settings.controls.p1Keyboard.melee)} Удар ·{' '}
+              {formatKeyCode(settings.controls.p1Keyboard.jump)} Прыжок ·{' '}
+              {formatKeyCode(settings.controls.p1Keyboard.shoot)} Огонь ·{' '}
+              {formatKeyCode(settings.controls.p1Keyboard.swap)} Ствол · Esc/{formatKeyCode(settings.controls.p1Keyboard.pause)} Пауза
             </>
           )}
         </div>

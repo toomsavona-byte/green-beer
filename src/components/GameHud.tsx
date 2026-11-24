@@ -1,4 +1,4 @@
-import { Pause, Volume2, VolumeX } from 'lucide-react';
+import { Maximize2, Minimize2, Pause, Volume2, VolumeX } from 'lucide-react';
 import { DIFFICULTY_MAP } from '../game/data';
 import { HudSnapshot, PlayerHudInfo } from '../game/types';
 
@@ -6,6 +6,9 @@ interface GameHudProps {
   hud: HudSnapshot | null;
   muted: boolean;
   showTouchControls: boolean;
+  canShowFullscreen?: boolean;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
   onToggleMute: () => void;
   onPause: () => void;
 }
@@ -14,6 +17,9 @@ export function GameHud({
   hud,
   muted,
   showTouchControls,
+  canShowFullscreen = false,
+  isFullscreen = false,
+  onToggleFullscreen,
   onToggleMute,
   onPause,
 }: GameHudProps) {
@@ -167,6 +173,21 @@ export function GameHud({
                 C:{hud.continuesLeft}/{hud.maxContinues}
               </span>
               <div className="flex items-center gap-0.5 sm:gap-1.5 pl-1.5 sm:pl-2 border-l border-[#2B3648] pointer-events-auto">
+                {canShowFullscreen && onToggleFullscreen && (
+                  <button
+                    type="button"
+                    onClick={onToggleFullscreen}
+                    aria-label={isFullscreen ? 'Выйти из полного экрана' : 'Развернуть на полный экран'}
+                    title={isFullscreen ? 'Выйти из полного экрана' : 'На полный экран'}
+                    className="min-w-[36px] min-h-[36px] sm:min-w-0 sm:min-h-0 sm:p-1 flex items-center justify-center text-[#00E5FF] hover:text-[#39FF14] cursor-pointer"
+                  >
+                    {isFullscreen ? (
+                      <Minimize2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+                    ) : (
+                      <Maximize2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+                    )}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={onToggleMute}

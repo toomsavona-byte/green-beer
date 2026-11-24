@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Check, Copy, RefreshCw, Users, Wifi, WifiOff } from 'lucide-react';
 import { DIFFICULTIES, DIFFICULTY_MAP, HEROES, HERO_MAP, HERO_PORTRAIT_URLS, LEVELS, WEAPON_MAP } from '../game/data';
 import { soundEngine } from '../game/audio';
@@ -11,6 +11,7 @@ import {
   OnlineRoomSnapshot,
   PublicRoomInfo,
 } from '../game/types';
+import { useGamepadMenuNav } from '../hooks/useGamepadMenuNav';
 
 interface OnlineLobbyProps {
   connected: boolean;
@@ -53,6 +54,9 @@ export function OnlineLobby({
 }: OnlineLobbyProps) {
   const [joinCode, setJoinCode] = useState('');
   const [copied, setCopied] = useState(false);
+  const [gpNavActive, setGpNavActive] = useState(false);
+  const [lobbyFocusIdx, setLobbyFocusIdx] = useState(0);
+  const [roomHeroCursor, setRoomHeroCursor] = useState(0);
 
   const handleCopyCode = () => {
     if (!room) return;
@@ -72,6 +76,128 @@ export function OnlineLobby({
       : room.hostHero
     : null;
 
+  useEffect(() => {
+    const clearGp = () => setGpNavActive(false);
+    window.addEventListener('pointerdown', clearGp, { passive: true });
+    return () => window.removeEventListener('pointerdown', clearGp);
+  }, []);
+
+  // Sync room hero cursor to player's currently selected hero upon entering room
+  useEffect(() => {
+    if (!room) return;
+    const idx = HEROES.findIndex((h) => h.id === myHeroId);
+    if (idx >= 0) setRoomHeroCursor(idx);
+  }, [room?.code, myHeroId]);
+
+  const entryItems = useMemo<string[]>(
+    () => ['create', 'refresh', ...openRooms.map((r) => `join:${r.code}`), 'back'],
+    [openRooms]
+  );
+
+  const safeEntryIdx = Math.min(lobbyFocusIdx, Math.max(0, entryItems.length - 1));
+  const focusedEntry = !room && gpNavActive ? entryItems[safeEntryIdx] : null;
+  const entryRing = (id: string) => (focusedEntry === id ? 'gp-focus-ring' : '');
+
+  useGamepadMenuNav({
+    enabled: true,
+    gamepadBindings: settings.controls.gamepad,
+    onActivity: () => setGpNavActive(true),
+    onUp: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      if (!room) {
+        setLobbyFocusIdx((i) => (i + entryItems.length - 1) % entryItems.length);
+      } else {
+        setRoomHeroCursor((i) => (i + HEROES.length - 4) % HEROES.length);
+      }
+    },
+    onDown: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      if (!room) {
+        setLobbyFocusIdx((i) => (i + 1) % entryItems.length);
+      } else {
+        setRoomHeroCursor((i) => (i + 4) % HEROES.length);
+      }
+    },
+    onLeft: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      if (!room) {
+        setLobbyFocusIdx((i) => (i + entryItems.length - 1) % entryItems.length);
+      } else {
+        setRoomHeroCursor((i) => (i + HEROES.length - 1) % HEROES.length);
+      }
+    },
+    onRight: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      if (!room) {
+        setLobbyFocusIdx((i) => (i + 1) % entryItems.length);
+      } else {
+        setRoomHeroCursor((i) => (i + 1) % HEROES.length);
+      }
+    },
+    onConfirm: () => {
+      soundEngine.unlock();
+      if (!room) {
+        const key = entryItems[safeEntryIdx];
+        if (key === 'create' && connected) {
+          soundEngine.playMenuConfirm();
+          onCreateRoom();
+        } else if (key === 'refresh') {
+          soundEngine.playMenuMove();
+          onRefreshRooms();
+        } else if (key?.startsWith('join:') && connected) {
+          soundEngine.playMenuConfirm();
+          onJoinRoom(key.slice(5));
+        } else if (key === 'back') {
+          soundEngine.playMenuMove();
+          onBack();
+        }
+      } else {
+        const picked = HEROES[roomHeroCursor];
+        if (picked && picked.id !== partnerHeroId) {
+          soundEngine.playMenuConfirm();
+          onSelectHero(picked.id);
+        }
+      }
+    },
+    onStart: () => {
+      if (!room) return;
+      soundEngine.unlock();
+      if (role === 'host' && room.guestConnected) {
+        soundEngine.playMenuConfirm();
+        onStartOnlineGame();
+      } else if (role === 'guest') {
+        soundEngine.playMenuConfirm();
+        onToggleReady(!room.guestReady);
+      }
+    },
+    onAlt: () => {
+      if (!room) return;
+      soundEngine.unlock();
+      if (role === 'guest') {
+        soundEngine.playMenuConfirm();
+        onToggleReady(!room.guestReady);
+      } else if (role === 'host') {
+        soundEngine.playMenuMove();
+        const order: DifficultyId[] = ['easy', 'normal', 'hard'];
+        const next = order[(order.indexOf(room.difficulty) + 1) % order.length];
+        onUpdateRoomSettings({ difficulty: next });
+      }
+    },
+    onBack: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      if (room) {
+        onLeaveRoom();
+      } else {
+        onBack();
+      }
+    },
+  });
+
   return (
     <div className="w-screen h-[100dvh] bg-[#090C11] text-[#E6EDF3] flex flex-col overflow-hidden safe-area-inset">
       {/* Top Header */}
@@ -86,7 +212,7 @@ export function OnlineLobby({
               onBack();
             }
           }}
-          className="flex items-center gap-1.5 px-3 min-h-[38px] bg-[#141A24] border border-[#2B3648] hover:border-[#39FF14] text-xs font-mono-num text-[#E6EDF3] cursor-pointer"
+          className={`flex items-center gap-1.5 px-3 min-h-[38px] bg-[#141A24] border border-[#2B3648] hover:border-[#39FF14] text-xs font-mono-num text-[#E6EDF3] cursor-pointer ${entryRing('back')}`}
         >
           <ArrowLeft className="w-4 h-4 text-[#39FF14]" />
           <span>{room ? 'ПОКИНУТЬ КОМНАТУ' : 'В МЕНЮ'}</span>
@@ -153,7 +279,7 @@ export function OnlineLobby({
                       soundEngine.playMenuConfirm();
                       onCreateRoom();
                     }}
-                    className="w-full min-h-[46px] py-3 bg-[#39FF14] hover:bg-[#5BFF3B] disabled:opacity-45 text-[#090C11] font-display font-bold text-sm sm:text-base tracking-widest cursor-pointer"
+                    className={`w-full min-h-[46px] py-3 bg-[#39FF14] hover:bg-[#5BFF3B] disabled:opacity-45 text-[#090C11] font-display font-bold text-sm sm:text-base tracking-widest cursor-pointer ${entryRing('create')}`}
                   >
                     СОЗДАТЬ КОМНАТУ
                   </button>
@@ -222,7 +348,7 @@ export function OnlineLobby({
                       soundEngine.playMenuMove();
                       onRefreshRooms();
                     }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#141A24] border border-[#2B3648] hover:border-[#FFB000] text-xs font-mono-num text-[#CBD5E1] cursor-pointer"
+                    className={`flex items-center gap-1.5 px-3 py-1.5 bg-[#141A24] border border-[#2B3648] hover:border-[#FFB000] text-xs font-mono-num text-[#CBD5E1] cursor-pointer ${entryRing('refresh')}`}
                   >
                     <RefreshCw className="w-3.5 h-3.5 text-[#FFB000]" />
                     <span>ОБНОВИТЬ</span>
@@ -264,7 +390,7 @@ export function OnlineLobby({
                             soundEngine.playMenuConfirm();
                             onJoinRoom(r.code);
                           }}
-                          className="px-3.5 py-2 bg-[#00E5FF] text-[#090C11] font-display font-bold text-xs tracking-wider cursor-pointer shrink-0"
+                          className={`px-3.5 py-2 bg-[#00E5FF] text-[#090C11] font-display font-bold text-xs tracking-wider cursor-pointer shrink-0 ${entryRing(`join:${r.code}`)}`}
                         >
                           ВОЙТИ
                         </button>
@@ -492,9 +618,10 @@ export function OnlineLobby({
                   ВЫБЕРИТЕ СВОЕГО БОЙЦА ({role === 'host' ? 'P1' : 'P2'}):
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  {HEROES.map((hero) => {
+                  {HEROES.map((hero, heroIdx) => {
                     const isMine = myHeroId === hero.id;
                     const isPartner = partnerHeroId === hero.id;
+                    const isGpFocused = gpNavActive && roomHeroCursor === heroIdx;
                     const borderClass = isMine
                       ? role === 'host'
                         ? 'border-[#39FF14] bg-[#16271C]'
@@ -513,7 +640,7 @@ export function OnlineLobby({
                         }}
                         className={`border-2 p-2 flex items-center gap-2.5 text-left transition-colors ${borderClass} ${
                           isPartner ? 'cursor-not-allowed' : 'cursor-pointer'
-                        }`}
+                        } ${isGpFocused ? 'gp-focus-ring' : ''}`}
                       >
                         <img
                           src={HERO_PORTRAIT_URLS[hero.id]}

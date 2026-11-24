@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { FastForward } from 'lucide-react';
+import { GamepadControlMap } from '../game/controls';
 import { HERO_MAP, HERO_PORTRAIT_URLS } from '../game/data';
 import { soundEngine } from '../game/audio';
 import { drawCutsceneScene, VIRTUAL_H, VIRTUAL_W } from '../game/sprites';
 import { CutsceneDef } from '../game/types';
+import { useGamepadMenuNav } from '../hooks/useGamepadMenuNav';
 
 interface CutsceneViewProps {
   cutscene: CutsceneDef;
   crtScanlines: boolean;
   isTouchDevice: boolean;
   renderScale: number;
+  gamepadBindings?: GamepadControlMap;
   onComplete: () => void;
   isOnlineGuest?: boolean;
   syncLineIndex?: number;
@@ -21,6 +24,7 @@ export function CutsceneView({
   crtScanlines,
   isTouchDevice,
   renderScale,
+  gamepadBindings,
   onComplete,
   isOnlineGuest = false,
   syncLineIndex,
@@ -154,6 +158,23 @@ export function CutsceneView({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onComplete, isOnlineGuest]);
+
+  useGamepadMenuNav({
+    enabled: !isOnlineGuest,
+    gamepadBindings,
+    onConfirm: () => advanceRef.current(),
+    onAlt: () => advanceRef.current(),
+    onStart: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuConfirm();
+      onComplete();
+    },
+    onBack: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuConfirm();
+      onComplete();
+    },
+  });
 
   const revealed = fullText.slice(0, visibleChars);
 

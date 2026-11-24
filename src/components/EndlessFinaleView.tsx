@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff, Home, Music, Volume2, VolumeX } from 'lucide-react';
+import { Eye, EyeOff, Home, Maximize2, Minimize2, Music, Volume2, VolumeX } from 'lucide-react';
 import { soundEngine } from '../game/audio';
+import { GamepadControlMap, isGamepadBindingActive } from '../game/controls';
+import { useGamepadMenuNav } from '../hooks/useGamepadMenuNav';
 
 interface EndlessFinaleViewProps {
   score: number;
@@ -9,6 +11,10 @@ interface EndlessFinaleViewProps {
   muted: boolean;
   isTouchDevice: boolean;
   renderScale: number;
+  gamepadBindings?: GamepadControlMap;
+  canShowFullscreen?: boolean;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
   onToggleMute: () => void;
   onReturnTitle: () => void;
 }
@@ -184,6 +190,10 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
   muted,
   isTouchDevice,
   renderScale,
+  gamepadBindings,
+  canShowFullscreen = false,
+  isFullscreen = false,
+  onToggleFullscreen,
   onToggleMute,
   onReturnTitle,
 }) => {
@@ -252,6 +262,66 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
       window.removeEventListener('keyup', onKeyUp);
     };
   }, [onToggleMute, triggerHorn]);
+
+  // Gamepad buttons in Endless Finale: A/✕ honks horn, X/Y toggles HUD, B/○ or START returns to title
+  useGamepadMenuNav({
+    enabled: true,
+    gamepadBindings,
+    onConfirm: () => {
+      soundEngine.unlock();
+      triggerHorn();
+    },
+    onAlt: () => setHudVisible((v) => !v),
+    onBack: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      onReturnTitle();
+    },
+    onStart: () => {
+      soundEngine.unlock();
+      soundEngine.playMenuMove();
+      onReturnTitle();
+    },
+  });
+
+  // Smooth continuous Left Stick / D-Pad steering for the Touring Van
+  useEffect(() => {
+    let rafId = 0;
+    let gpSteering = false;
+    const pollSteer = () => {
+      const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      let steer = 0;
+      for (let i = 0; i < pads.length; i++) {
+        const pad = pads[i];
+        if (!pad || !pad.connected) continue;
+        const ax = Number(pad.axes[0]) || 0;
+        if (Math.abs(ax) > 0.22) {
+          steer = ax;
+          break;
+        }
+        const left =
+          Boolean(pad.buttons[14]?.pressed) ||
+          (gamepadBindings ? isGamepadBindingActive(pad, gamepadBindings.left) : false);
+        const right =
+          Boolean(pad.buttons[15]?.pressed) ||
+          (gamepadBindings ? isGamepadBindingActive(pad, gamepadBindings.right) : false);
+        if (left || right) {
+          steer = (right ? 1 : 0) - (left ? 1 : 0);
+          break;
+        }
+      }
+      if (steer !== 0) {
+        gpSteering = true;
+        steerInputRef.current = steer;
+      } else if (gpSteering) {
+        gpSteering = false;
+        steerInputRef.current = 0;
+      }
+      rafId = requestAnimationFrame(pollSteer);
+    };
+    rafId = requestAnimationFrame(pollSteer);
+    return () => cancelAnimationFrame(rafId);
+  }, [gamepadBindings]);
 
   // Main 60 FPS Endless Malibu / Vice City OutRun Canvas Loop
   useEffect(() => {
@@ -1729,6 +1799,18 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
                 <Music className="w-3.5 h-3.5 text-[#FEF08A]" />
                 <span>ГУДОК</span>
               </button>
+
+              {canShowFullscreen && onToggleFullscreen && (
+                <button
+                  type="button"
+                  onClick={onToggleFullscreen}
+                  aria-label={isFullscreen ? 'Выйти из полного экрана' : 'На полный экран'}
+                  title={isFullscreen ? 'Выйти из полного экрана' : 'На полный экран'}
+                  className="p-2 bg-[#0F0822]/75 hover:bg-[#1E1042] border border-[#22D3EE]/50 text-[#67E8F9] transition cursor-pointer"
+                >
+                  {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                </button>
+              )}
 
               <button
                 type="button"

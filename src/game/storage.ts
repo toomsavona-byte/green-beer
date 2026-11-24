@@ -1,3 +1,4 @@
+import { DEFAULT_CONTROL_BINDINGS, normalizeControlBindings } from './controls';
 import { DifficultyId, LevelId, SaveData, TouchControlsMode } from './types';
 
 const STORAGE_KEY = 'green_beer_pizedes_save_v1';
@@ -18,13 +19,20 @@ const DEFAULT_SAVE: SaveData = {
   friendlyFire: false,
   crtScanlines: !detectInitialTouchDevice(),
   touchControlsMode: 'auto',
+  controls: normalizeControlBindings(DEFAULT_CONTROL_BINDINGS),
 };
 
 export function loadSaveData(): SaveData {
   const defaultCrt = !detectInitialTouchDevice();
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_SAVE, crtScanlines: defaultCrt };
+    if (!raw) {
+      return {
+        ...DEFAULT_SAVE,
+        crtScanlines: defaultCrt,
+        controls: normalizeControlBindings(DEFAULT_CONTROL_BINDINGS),
+      };
+    }
     const parsed = JSON.parse(raw) as Partial<SaveData>;
     const validTouchMode: TouchControlsMode =
       parsed.touchControlsMode === 'on' || parsed.touchControlsMode === 'off' || parsed.touchControlsMode === 'auto'
@@ -43,9 +51,14 @@ export function loadSaveData(): SaveData {
       friendlyFire: Boolean(parsed.friendlyFire),
       crtScanlines: parsed.crtScanlines !== undefined ? Boolean(parsed.crtScanlines) : defaultCrt,
       touchControlsMode: validTouchMode,
+      controls: normalizeControlBindings(parsed.controls),
     };
   } catch {
-    return { ...DEFAULT_SAVE, crtScanlines: defaultCrt };
+    return {
+      ...DEFAULT_SAVE,
+      crtScanlines: defaultCrt,
+      controls: normalizeControlBindings(DEFAULT_CONTROL_BINDINGS),
+    };
   }
 }
 
@@ -54,6 +67,7 @@ export function saveProgress(partial: Partial<SaveData>): SaveData {
   const next: SaveData = {
     ...current,
     ...partial,
+    controls: partial.controls ? normalizeControlBindings(partial.controls) : current.controls,
     highScore: Math.max(current.highScore, partial.highScore ?? 0),
   };
   try {

@@ -16,6 +16,7 @@ export function TouchControls({
   onButtonChange,
   onClearAll,
 }: TouchControlsProps) {
+  const controlsRootRef = useRef<HTMLDivElement | null>(null);
   const stickBaseRef = useRef<HTMLDivElement | null>(null);
   const stickPointerIdRef = useRef<number | null>(null);
   const [knobPos, setKnobPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -33,6 +34,21 @@ export function TouchControls({
       onClearAll();
     };
   }, [onClearAll]);
+
+  // Block iOS Safari native edge-swipe / double-tap zoom / loupe on virtual touch controls
+  useEffect(() => {
+    const el = controlsRootRef.current;
+    if (!el) return;
+    const blockBrowserTouch = (e: TouchEvent) => {
+      if (e.cancelable) e.preventDefault();
+    };
+    el.addEventListener('touchstart', blockBrowserTouch, { passive: false });
+    el.addEventListener('touchmove', blockBrowserTouch, { passive: false });
+    return () => {
+      el.removeEventListener('touchstart', blockBrowserTouch);
+      el.removeEventListener('touchmove', blockBrowserTouch);
+    };
+  }, []);
 
   const updateStickFromPointer = (clientX: number, clientY: number) => {
     const base = stickBaseRef.current;
@@ -100,11 +116,12 @@ export function TouchControls({
 
   return (
     <div
-      className="fixed inset-x-0 bottom-0 z-25 pointer-events-none flex items-end justify-between px-4 sm:px-7 pb-4 sm:pb-6"
+      ref={controlsRootRef}
+      className="fixed inset-x-0 bottom-0 z-25 pointer-events-none flex items-end justify-between"
       style={{
-        paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
-        paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
-        paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))',
+        paddingLeft: 'max(1.75rem, calc(env(safe-area-inset-left, 0px) + 0.85rem))',
+        paddingRight: 'max(1.75rem, calc(env(safe-area-inset-right, 0px) + 0.85rem))',
+        paddingBottom: 'max(1.4rem, calc(env(safe-area-inset-bottom, 0px) + 0.65rem))',
       }}
     >
       {/* Left Thumb Zone: 8-Way Virtual Arcade Joystick */}
