@@ -5,11 +5,12 @@ const config: CapacitorConfig = {
   appName: 'Green Beer Pizedes',
   webDir: 'dist',
   server: {
-    androidScheme: 'https',
+    androidScheme: 'http',
+    cleartext: true,
   },
   android: {
     backgroundColor: '#090C11',
-    allowMixedContent: false,
+    allowMixedContent: true,
   },
 };
 

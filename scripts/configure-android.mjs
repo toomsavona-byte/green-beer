@@ -23,8 +23,19 @@ if (manifest.includes('android:screenOrientation=')) {
     '<activity$1 android:screenOrientation="sensorLandscape">'
   );
 }
+if (manifest.includes('android:usesCleartextTraffic=')) {
+  manifest = manifest.replace(
+    /android:usesCleartextTraffic="[^"]*"/g,
+    'android:usesCleartextTraffic="true"'
+  );
+} else {
+  manifest = manifest.replace(
+    /<application\b/,
+    '<application android:usesCleartextTraffic="true"'
+  );
+}
 fs.writeFileSync(manifestPath, manifest, 'utf8');
-console.log('✓ AndroidManifest.xml locked to sensorLandscape');
+console.log('✓ AndroidManifest.xml locked to sensorLandscape + cleartext WS enabled');
 
 // 2. Patch MainActivity.java for immersive sticky fullscreen & keep screen awake
 const mainActPath = path.join(
