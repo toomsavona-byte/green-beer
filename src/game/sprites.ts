@@ -1,5 +1,5 @@
 import { HERO_MAP, HEROES, WEAPON_MAP } from './data';
-import { getGroundElevation, isDaylightLevel, tileHash } from './terrain';
+import { getCameraOffsetY, getGroundElevation, getGroundSlope, isDaylightLevel, tileHash } from './terrain';
 import { CutsceneDef, EnemyKind, HeroId, LevelDef, WeaponId } from './types';
 
 export const VIRTUAL_W = 480;
@@ -3144,40 +3144,241 @@ function drawSlopedGroundSurface(
   ctx: CanvasRenderingContext2D,
   levelId: LevelDef['id'],
   camX: number,
+  camY: number,
   roadFill: string,
   curbTop: string,
   curbShadow: string,
   shoulderColor?: string
 ): void {
   const step = 12;
-  // Main sloped road/floor polygon
-  ctx.fillStyle = roadFill;
+  const daylight = isDaylightLevel(levelId);
+  const relY = (sx: number) => getGroundElevation(levelId, camX + sx) - camY;
+
+  // 1. Steep-Ramp Riveted Retaining Bulkhead Wall behind upper curb (Contra: Hard Corps signature!)
+  const panelW = 24;
+  const startPanel = Math.floor(camX / panelW) - 1;
+  for (let k = 0; k < Math.ceil(VIRTUAL_W / panelW) + 3; k++) {
+    const pIdx = startPanel + k;
+    const worldX0 = pIdx * panelW;
+    const worldX1 = worldX0 + panelW;
+    const sx0 = worldX0 - camX;
+    const sx1 = worldX1 - camX;
+    const sl = Math.abs(getGroundSlope(levelId, worldX0 + panelW * 0.5));
+    if (sl <= 0.13) continue;
+
+    const blend = Math.min(1, (sl - 0.13) / 0.14);
+    const wallH = Math.round(52 * blend);
+    if (wallH < 8) continue;
+
+    const y0 = FLOOR_MIN_Y + getGroundElevation(levelId, worldX0) - camY;
+    const y1 = FLOOR_MIN_Y + getGroundElevation(levelId, worldX1) - camY;
+    const h = tileHash(pIdx, levelId * 17 + 5);
+
+    // Industrial riveted steel/rust plate (dark levels) or sunlit viaduct concrete rib wall (light levels)
+    const plateFill = daylight
+      ? h % 2 === 0 ? '#788496' : '#64748B'
+      : h % 2 === 0 ? '#3E251F' : '#311D18';
+    const plateHi = daylight ? '#94A3B8' : '#5C372D';
+    const plateSeam = daylight ? '#334155' : '#180D0B';
+
+    ctx.fillStyle = plateFill;
+    ctx.beginPath();
+    ctx.moveTo(sx0, y0 - wallH);
+    ctx.lineTo(sx1 + 0.5, y1 - wallH);
+    ctx.lineTo(sx1 + 0.5, y1 + 4);
+    ctx.lineTo(sx0, y0 + 4);
+    ctx.closePath();
+    ctx.fill();
+
+    // Vertical panel seam & bevel highlight
+    ctx.strokeStyle = plateSeam;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx0, y0 - wallH);
+    ctx.lineTo(sx0, y0 + 2);
+    ctx.moveTo(sx0, y0 - wallH);
+    ctx.lineTo(sx1, y1 - wallH);
+    ctx.stroke();
+
+    ctx.strokeStyle = plateHi;
+    ctx.beginPath();
+    ctx.moveTo(sx0 + 1.5, y0 - wallH + 2);
+    ctx.lineTo(sx0 + 1.5, y0 - 2);
+    ctx.stroke();
+
+    // Horizontal mid-seam + industrial rivets
+    const midY0 = y0 - wallH * 0.5;
+    const midY1 = y1 - wallH * 0.5;
+    ctx.strokeStyle = plateSeam;
+    ctx.beginPath();
+    ctx.moveTo(sx0, midY0);
+    ctx.lineTo(sx1, midY1);
+    ctx.stroke();
+
+    ctx.fillStyle = plateSeam;
+    px(ctx, sx0 + 4, y0 - wallH + 5, 2, 2, plateSeam);
+    px(ctx, sx1 - 6, y1 - wallH + 5, 2, 2, plateSeam);
+    px(ctx, sx0 + 4, midY0 + 5, 2, 2, plateSeam);
+    px(ctx, sx1 - 6, midY1 + 5, 2, 2, plateSeam);
+
+    // Occasional recessed circular industrial exhaust vent port (classic Contra wall detail)
+    if (h % 5 === 0 && wallH >= 32) {
+      const vx = (sx0 + sx1) * 0.5;
+      const vy = (y0 + y1) * 0.5 - wallH * 0.45;
+      ctx.fillStyle = INK;
+      ctx.beginPath();
+      ctx.arc(vx, vy, 5.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = daylight ? '#CBD5E1' : '#64748B';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.fillStyle = daylight ? '#1E293B' : '#0B0F17';
+      ctx.beginPath();
+      ctx.arc(vx, vy, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // 2. Massive Structural Under-Deck Girder & Support Piers (prevents empty sky below steep uphill ramps!)
+  const deckH = VIRTUAL_H - FLOOR_MIN_Y;
+  ctx.fillStyle = daylight ? '#263142' : '#060910';
   ctx.beginPath();
-  ctx.moveTo(0, VIRTUAL_H);
+  ctx.moveTo(0, VIRTUAL_H + 220);
   for (let x = 0; x <= VIRTUAL_W + step; x += step) {
     const sx = Math.min(VIRTUAL_W, x);
-    const y = FLOOR_MIN_Y + getGroundElevation(levelId, camX + sx);
-    ctx.lineTo(sx, y);
+    ctx.lineTo(sx, FLOOR_MIN_Y + deckH + relY(sx) - 2);
   }
-  ctx.lineTo(VIRTUAL_W, VIRTUAL_H);
+  ctx.lineTo(VIRTUAL_W, VIRTUAL_H + 220);
   ctx.closePath();
   ctx.fill();
 
-  // Sloped sidewalk / curb ribbon along top edge of road
-  ctx.fillStyle = curbTop;
+  // Heavy Concrete Support Columns underneath elevated ramp deck
+  const pierSpacing = 112;
+  const startPier = Math.floor(camX / pierSpacing) - 1;
+  for (let k = 0; k < 7; k++) {
+    const pIdx = startPier + k;
+    const pxWorld = pIdx * pierSpacing;
+    const psx = pxWorld - camX;
+    const botY = FLOOR_MIN_Y + deckH + getGroundElevation(levelId, pxWorld) - camY;
+    if (botY < VIRTUAL_H + 10) {
+      px(ctx, psx - 10, botY, 20, VIRTUAL_H - botY + 40, daylight ? '#475569' : '#141D2B');
+      px(ctx, psx - 10, botY, 4, VIRTUAL_H - botY + 40, daylight ? '#64748B' : '#243247');
+      px(ctx, psx + 7, botY, 3, VIRTUAL_H - botY + 40, INK);
+    }
+  }
+
+  // 3. Main Sloped Playable Roadway Slab Polygon
+  ctx.fillStyle = roadFill;
   ctx.beginPath();
   for (let x = 0; x <= VIRTUAL_W + step; x += step) {
     const sx = Math.min(VIRTUAL_W, x);
-    const y = FLOOR_MIN_Y + getGroundElevation(levelId, camX + sx);
+    const y = FLOOR_MIN_Y + relY(sx);
     if (x === 0) ctx.moveTo(sx, y);
     else ctx.lineTo(sx, y);
   }
   for (let x = VIRTUAL_W; x >= 0; x -= step) {
-    const y = FLOOR_MIN_Y + 6 + getGroundElevation(levelId, camX + x);
+    ctx.lineTo(x, FLOOR_MIN_Y + deckH + relY(x));
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // 4. Lower Roadway Edge / Heavy Under-Beam Girder Ribbon
+  const botBeamFill = shoulderColor ?? (daylight ? '#64748B' : '#1E293B');
+  ctx.fillStyle = botBeamFill;
+  ctx.beginPath();
+  for (let x = 0; x <= VIRTUAL_W + step; x += step) {
+    const sx = Math.min(VIRTUAL_W, x);
+    const y = FLOOR_MIN_Y + deckH - 7 + relY(sx);
+    if (x === 0) ctx.moveTo(sx, y);
+    else ctx.lineTo(sx, y);
+  }
+  for (let x = VIRTUAL_W; x >= 0; x -= step) {
+    ctx.lineTo(x, FLOOR_MIN_Y + deckH + 5 + relY(x));
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let x = 0; x <= VIRTUAL_W + step; x += step) {
+    const sx = Math.min(VIRTUAL_W, x);
+    const y = FLOOR_MIN_Y + deckH + 5 + relY(sx);
+    if (x === 0) ctx.moveTo(sx, y);
+    else ctx.lineTo(sx, y);
+  }
+  ctx.stroke();
+
+  // 5. Iconic Thick Beveled Concrete Upper Curb / Contra Diagonal Ramp Slab Edge!
+  ctx.fillStyle = curbTop;
+  ctx.beginPath();
+  for (let x = 0; x <= VIRTUAL_W + step; x += step) {
+    const sx = Math.min(VIRTUAL_W, x);
+    const y = FLOOR_MIN_Y - 1 + relY(sx);
+    if (x === 0) ctx.moveTo(sx, y);
+    else ctx.lineTo(sx, y);
+  }
+  for (let x = VIRTUAL_W; x >= 0; x -= step) {
+    const y = FLOOR_MIN_Y + 8 + relY(x);
     ctx.lineTo(x, y);
   }
   ctx.closePath();
   ctx.fill();
+
+  // Bright top concrete highlight edge
+  ctx.strokeStyle = daylight ? '#FFFFFF' : '#94A3B8';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  for (let x = 0; x <= VIRTUAL_W + step; x += step) {
+    const sx = Math.min(VIRTUAL_W, x);
+    const y = FLOOR_MIN_Y + 0.5 + relY(sx);
+    if (x === 0) ctx.moveTo(sx, y);
+    else ctx.lineTo(sx, y);
+  }
+  ctx.stroke();
+
+  // Crisp top ink outline
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  for (let x = 0; x <= VIRTUAL_W + step; x += step) {
+    const sx = Math.min(VIRTUAL_W, x);
+    const y = FLOOR_MIN_Y - 1.2 + relY(sx);
+    if (x === 0) ctx.moveTo(sx, y);
+    else ctx.lineTo(sx, y);
+  }
+  ctx.stroke();
+
+  // Concrete expansion joint cracks & steep-ramp yellow/black hazard chevrons along curb
+  const jointStep = 36;
+  const startJoint = Math.floor(camX / jointStep) - 1;
+  for (let k = 0; k < Math.ceil(VIRTUAL_W / jointStep) + 3; k++) {
+    const jIdx = startJoint + k;
+    const wx = jIdx * jointStep;
+    const sx = wx - camX;
+    const gy = FLOOR_MIN_Y + getGroundElevation(levelId, wx) - camY;
+    const sl = getGroundSlope(levelId, wx);
+
+    // Cracked expansion joint line across curb
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(sx, gy - 1);
+    ctx.lineTo(sx - 2, gy + 4);
+    ctx.lineTo(sx + 1, gy + 8);
+    ctx.stroke();
+
+    // Bold arcade ramp hazard stripe on steep inclines/declines!
+    if (Math.abs(sl) > 0.16 && jIdx % 2 === 0) {
+      const gyNext = FLOOR_MIN_Y + getGroundElevation(levelId, wx + 14) - camY;
+      ctx.strokeStyle = '#FACC15';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(sx + 4, gy + 4);
+      ctx.lineTo(sx + 18, gyNext + 4);
+      ctx.stroke();
+    }
+  }
 
   // Crisp curb drop shadow line
   ctx.strokeStyle = curbShadow;
@@ -3185,16 +3386,11 @@ function drawSlopedGroundSurface(
   ctx.beginPath();
   for (let x = 0; x <= VIRTUAL_W + step; x += step) {
     const sx = Math.min(VIRTUAL_W, x);
-    const y = FLOOR_MIN_Y + 6.5 + getGroundElevation(levelId, camX + sx);
+    const y = FLOOR_MIN_Y + 8.5 + relY(sx);
     if (x === 0) ctx.moveTo(sx, y);
     else ctx.lineTo(sx, y);
   }
   ctx.stroke();
-
-  if (shoulderColor) {
-    ctx.fillStyle = shoulderColor;
-    ctx.fillRect(0, VIRTUAL_H - 7, VIRTUAL_W, 7);
-  }
 }
 
 function drawCyberSkyline(
@@ -3202,14 +3398,16 @@ function drawCyberSkyline(
   level: LevelDef,
   camX: number,
   time: number,
-  speedOverride?: number
+  speedOverride?: number,
+  camY = 0
 ): void {
   const daylight = isDaylightLevel(level.id);
+  const skyShiftY = Math.round(-camY * 0.16);
 
-  // Layer 1: Sky gradient (Bright sunlit daylight for Levels 2, 4, 6; Atmospheric night for Levels 1, 3, 5)
-  const grad = ctx.createLinearGradient(0, 0, 0, FLOOR_MIN_Y + 14);
+  // Layer 1: Full-height sky gradient so steep uphill/downhill ramps never show gaps
+  const grad = ctx.createLinearGradient(0, 0, 0, VIRTUAL_H);
   grad.addColorStop(0, level.skyTop);
-  grad.addColorStop(0.66, level.skyBottom);
+  grad.addColorStop(0.58, level.skyBottom);
   grad.addColorStop(
     1,
     daylight
@@ -3223,12 +3421,12 @@ function drawCyberSkyline(
         : '#102028'
   );
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, VIRTUAL_W, FLOOR_MIN_Y + 20);
+  ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
 
   if (daylight) {
     // Radiant daytime sun + warm atmospheric glow
     const sunX = level.id === 4 ? VIRTUAL_W - 102 : VIRTUAL_W - 76 - ((camX * 0.015) % 30);
-    const sunY = level.id === 6 ? 26 : 30;
+    const sunY = (level.id === 6 ? 26 : 30) + Math.round(skyShiftY * 0.25);
     const sunGrad = ctx.createRadialGradient(sunX, sunY, 4, sunX, sunY, 58);
     sunGrad.addColorStop(0, 'rgba(255, 251, 235, 0.95)');
     sunGrad.addColorStop(0.32, 'rgba(254, 240, 138, 0.45)');
@@ -3246,7 +3444,7 @@ function drawCyberSkyline(
     const cloudScroll = Math.floor((speedOverride ?? camX * 0.07) + time * 5);
     for (let i = -1; i < 7; i++) {
       const cx = i * 108 - (cloudScroll % 108);
-      const cy = 18 + (tileHash(i, level.id * 7) % 3) * 11;
+      const cy = 18 + (tileHash(i, level.id * 7) % 3) * 11 + Math.round(skyShiftY * 0.35);
       ctx.fillStyle = 'rgba(255, 255, 255, 0.82)';
       ctx.beginPath();
       ctx.ellipse(cx + 28, cy + 5, 26, 7, 0, 0, Math.PI * 2);
@@ -3263,7 +3461,7 @@ function drawCyberSkyline(
       ctx.lineWidth = 1;
       for (let b = 0; b < 4; b++) {
         const bx = ((b * 127 + time * (16 + b * 4)) % (VIRTUAL_W + 40)) - 20;
-        const by = 24 + b * 9 + Math.sin(time * 5 + b) * 2;
+        const by = 24 + b * 9 + Math.sin(time * 5 + b) * 2 + Math.round(skyShiftY * 0.35);
         const flap = Math.sin(time * 9 + b * 2) * 2.5;
         ctx.beginPath();
         ctx.moveTo(bx - 4, by + flap);
@@ -3273,18 +3471,21 @@ function drawCyberSkyline(
       }
     }
 
+    ctx.save();
+    ctx.translate(0, skyShiftY);
+
     // Distant sunlit mountain / coastal ridge in atmospheric blue haze
     const mtnScroll = Math.floor((speedOverride !== undefined ? speedOverride * 0.14 : camX * 0.1));
     ctx.fillStyle = level.id === 2 ? '#93C5FD' : level.id === 4 ? '#7DD3FC' : '#BAE6FD';
     ctx.beginPath();
-    ctx.moveTo(0, FLOOR_MIN_Y + 14);
+    ctx.moveTo(0, VIRTUAL_H + 140);
     for (let x = -40; x <= VIRTUAL_W + 60; x += 48) {
       const idx = Math.floor((x + mtnScroll) / 48);
       const sx = idx * 48 - mtnScroll;
       const peak = 32 + (tileHash(idx, level.id * 13) % 34);
       ctx.lineTo(sx, FLOOR_MIN_Y - peak);
     }
-    ctx.lineTo(VIRTUAL_W + 60, FLOOR_MIN_Y + 14);
+    ctx.lineTo(VIRTUAL_W + 60, VIRTUAL_H + 140);
     ctx.closePath();
     ctx.fill();
 
@@ -3302,11 +3503,11 @@ function drawCyberSkyline(
       const wallCol = h % 3 === 0 ? '#94A3B8' : h % 3 === 1 ? '#CBD5E1' : '#A8B9CC';
       const sunCol = '#F1F5F9';
 
-      px(ctx, bx, topY, bw, bh + 16, wallCol);
-      px(ctx, bx, topY, 3, bh + 16, sunCol); // Sunlit left edge
+      px(ctx, bx, topY, bw, bh + 180, wallCol);
+      px(ctx, bx, topY, 3, bh + 180, sunCol); // Sunlit left edge
       px(ctx, bx, topY, bw, 2, '#E2E8F0');
       // Subtle daytime sky-reflecting glass windows
-      for (let wy = topY + 6; wy < FLOOR_MIN_Y - 12; wy += 8) {
+      for (let wy = topY + 6; wy < FLOOR_MIN_Y + 60; wy += 8) {
         for (let wxOff = 6; wxOff < bw - 7; wxOff += 9) {
           if ((h + wy + wxOff) % 4 !== 0) {
             px(ctx, bx + wxOff, wy, 4.5, 3, '#64748B');
@@ -3318,31 +3519,37 @@ function drawCyberSkyline(
         px(ctx, bx + bw / 2 - 1, topY - 14, 2, 14, '#64748B');
       }
     }
+    ctx.restore();
     return;
   }
 
   // ── DARK NIGHT SKYLINE (Levels 1 & 3) ──
   const moonX = VIRTUAL_W - 88 - ((camX * 0.025) % 40);
-  const moonGrad = ctx.createRadialGradient(moonX, 34, 4, moonX, 34, 48);
+  const moonY = 34 + Math.round(skyShiftY * 0.2);
+  const moonGrad = ctx.createRadialGradient(moonX, moonY, 4, moonX, moonY, 48);
   moonGrad.addColorStop(0, 'rgba(226, 232, 240, 0.34)');
   moonGrad.addColorStop(0.5, 'rgba(57, 255, 20, 0.10)');
   moonGrad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = moonGrad;
   ctx.beginPath();
-  ctx.arc(moonX, 34, 48, 0, Math.PI * 2);
+  ctx.arc(moonX, moonY, 48, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = '#E2E8F0';
   ctx.beginPath();
-  ctx.arc(moonX, 34, 10.5, 0, Math.PI * 2);
+  ctx.arc(moonX, moonY, 10.5, 0, Math.PI * 2);
   ctx.fill();
 
   // Drifting night clouds
   const cloudScroll = Math.floor((speedOverride ?? camX * 0.09) + time * 5);
   for (let i = -1; i < 7; i++) {
     const cx = i * 96 - (cloudScroll % 96);
-    px(ctx, cx, 14 + (i % 2) * 10, 74, 8, 'rgba(255,255,255,0.04)');
-    px(ctx, cx + 18, 10 + (i % 2) * 10, 44, 5, 'rgba(57,255,20,0.05)');
+    const cy = 14 + (i % 2) * 10 + Math.round(skyShiftY * 0.3);
+    px(ctx, cx, cy, 74, 8, 'rgba(255,255,255,0.04)');
+    px(ctx, cx + 18, cy - 4, 44, 5, 'rgba(57,255,20,0.05)');
   }
+
+  ctx.save();
+  ctx.translate(0, skyShiftY);
 
   // Distant varied night skyline (hashed, non-repeating silhouettes)
   const farScroll = Math.floor(speedOverride !== undefined ? speedOverride * 0.32 : camX * 0.22);
@@ -3360,15 +3567,15 @@ function drawCyberSkyline(
     ctx.fillStyle = archType === 2 ? '#101626' : '#0B101B';
     if (archType === 1) {
       ctx.beginPath();
-      ctx.moveTo(bx - 4, FLOOR_MIN_Y + 14);
+      ctx.moveTo(bx - 4, VIRTUAL_H + 140);
       ctx.lineTo(bx + 10, topY + 6);
       ctx.lineTo(bx + bw - 10, topY + 6);
-      ctx.lineTo(bx + bw + 4, FLOOR_MIN_Y + 14);
+      ctx.lineTo(bx + bw + 4, VIRTUAL_H + 140);
       ctx.closePath();
       ctx.fill();
       px(ctx, bx + 11, topY + 6, bw - 22, 2, '#39FF14');
     } else {
-      px(ctx, bx, topY, bw, bh + 20, archType === 3 ? '#0E1624' : '#0B101B');
+      px(ctx, bx, topY, bw, bh + 190, archType === 3 ? '#0E1624' : '#0B101B');
       px(ctx, bx + 1, topY, bw - 2, 2, archType === 0 ? '#334155' : '#1E293B');
     }
 
@@ -3381,7 +3588,7 @@ function drawCyberSkyline(
       px(ctx, bx + 4, topY + 8, 2, bh - 16, h % 2 === 0 ? '#00E5FF' : '#FF2A85');
     }
 
-    for (let wy = topY + 8; wy < FLOOR_MIN_Y - 12; wy += 8) {
+    for (let wy = topY + 8; wy < FLOOR_MIN_Y + 60; wy += 8) {
       for (let wxOff = 6; wxOff < bw - 10; wxOff += 11) {
         if ((h + wy + wxOff) % 5 !== 0) {
           const wCol =
@@ -3395,6 +3602,7 @@ function drawCyberSkyline(
       }
     }
   }
+  ctx.restore();
 }
 
 export function drawLevelBackground(
@@ -3405,6 +3613,7 @@ export function drawLevelBackground(
   elevatorFloor = 1
 ): void {
   const midScroll = Math.floor(camX * 0.65);
+  const camY = getCameraOffsetY(level.id, camX);
 
   // =========================================================================
   // LEVEL 5: HIGH-SPEED VERTICAL FREIGHT ELEVATOR TO DIRECTOR'S PENTHOUSE!
@@ -3536,7 +3745,7 @@ export function drawLevelBackground(
   // LEVEL 1 (DARK): NIGHT CITY STREETS, REALISTIC NON-REPEATING BLOCKS & BARS
   // =========================================================================
   if (level.id === 1) {
-    drawCyberSkyline(ctx, level, camX, time);
+    drawCyberSkyline(ctx, level, camX, time, undefined, camY);
 
     const tileW = 128;
     const startIdx = Math.floor(midScroll / tileW) - 1;
@@ -3546,13 +3755,15 @@ export function drawLevelBackground(
       const h = tileHash(wIdx, 11);
       const variant = h % 9;
       const neonBlink = Math.sin(time * 7 + wIdx * 2.3) > -0.78;
-      // Anchor each city block smoothly to local street hill elevation
+      // Anchor each city block smoothly to local street ramp elevation
       const blockWorldX = camX + wx + tileW * 0.5;
-      const el = Math.round(getGroundElevation(1, blockWorldX));
+      const el = Math.round(getGroundElevation(1, blockWorldX) - camY);
       const base = FLOOR_MIN_Y + el;
 
       ctx.save();
       ctx.translate(0, el);
+      // Grounded stone foundation skirt prevents buildings from floating on steep diagonal ramps
+      px(ctx, wx - 2, FLOOR_MIN_Y - 4, 128, 96, '#0E1520');
 
       if (variant === 0) {
         // Neighborhood Pub «GREEN BEER» with brick facade, drainpipe & warm doorway
@@ -3722,26 +3933,35 @@ export function drawLevelBackground(
       void base;
     }
 
-    // Smooth Sloped Wet Dark Asphalt + Sloped Curb!
-    drawSlopedGroundSurface(ctx, 1, camX, '#111622', '#2D3A4F', '#070A0F');
+    // Steep Sloped Wet Dark Asphalt + Contra Beveled Ramp Curb!
+    drawSlopedGroundSurface(ctx, 1, camX, camY, '#111622', '#475569', '#070A0F');
 
     const roadTile = 92;
     const roadStart = Math.floor(camX / roadTile) - 1;
     for (let k = 0; k < 8; k++) {
       const rIdx = roadStart + k;
       const rx = rIdx * roadTile - camX;
-      const rEl = getGroundElevation(1, rIdx * roadTile + 24);
-      px(ctx, rx + 8, 206 + rEl, 34, 3, '#334155');
-      px(ctx, rx + 12, FLOOR_MIN_Y + 8 + rEl, 18, 5, '#070A0F');
+      const rEl0 = getGroundElevation(1, rIdx * roadTile + 8) - camY;
+      const rEl1 = getGroundElevation(1, rIdx * roadTile + 42) - camY;
+      const rEl = getGroundElevation(1, rIdx * roadTile + 24) - camY;
+      // Sloped center dashed road stripe
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(rx + 8, 206 + rEl0);
+      ctx.lineTo(rx + 42, 206 + rEl1);
+      ctx.stroke();
+
+      px(ctx, rx + 12, FLOOR_MIN_Y + 10 + rEl, 18, 5, '#070A0F');
       if (tileHash(rIdx, 91) % 3 === 0) {
         const st = (time * 24 + rIdx * 11) % 24;
         ctx.fillStyle = `rgba(203, 213, 225, ${0.22 * (1 - st / 24)})`;
         ctx.beginPath();
-        ctx.arc(rx + 21 + Math.sin(time * 3 + rIdx) * 3, FLOOR_MIN_Y + 8 + rEl - st, 4 + st * 0.25, 0, Math.PI * 2);
+        ctx.arc(rx + 21 + Math.sin(time * 3 + rIdx) * 3, FLOOR_MIN_Y + 10 + rEl - st, 4 + st * 0.25, 0, Math.PI * 2);
         ctx.fill();
       }
       if (tileHash(rIdx, 93) % 5 === 0) {
-        for (let cy = FLOOR_MIN_Y + 14; cy < VIRTUAL_H - 12; cy += 14) {
+        for (let cy = FLOOR_MIN_Y + 16; cy < VIRTUAL_H - 12; cy += 14) {
           px(ctx, rx + 42, cy + rEl, 24, 6, 'rgba(226, 232, 240, 0.14)');
         }
       }
@@ -3764,19 +3984,20 @@ export function drawLevelBackground(
   // LEVEL 2 (LIGHT): SUNNY DAYTIME SOUTHERN MARKET, PROMENADE & WATERFRONT!
   // =========================================================================
   } else if (level.id === 2) {
-    drawCyberSkyline(ctx, level, camX, time);
+    drawCyberSkyline(ctx, level, camX, time, undefined, camY);
 
     // Sparkling sunlit southern sea bay behind the market promenade!
-    const seaGrad = ctx.createLinearGradient(0, FLOOR_MIN_Y - 38, 0, FLOOR_MIN_Y + 12);
+    const seaY = FLOOR_MIN_Y - 38 + Math.round(-camY * 0.22);
+    const seaGrad = ctx.createLinearGradient(0, seaY, 0, seaY + 72);
     seaGrad.addColorStop(0, '#0284C7');
     seaGrad.addColorStop(0.55, '#38BDF8');
     seaGrad.addColorStop(1, '#7DD3FC');
     ctx.fillStyle = seaGrad;
-    ctx.fillRect(0, FLOOR_MIN_Y - 36, VIRTUAL_W, 48);
+    ctx.fillRect(0, seaY, VIRTUAL_W, VIRTUAL_H + 140);
     // Animated sunlight glints on waves
     for (let w = 0; w < 18; w++) {
       const wx = ((w * 37 - Math.floor(camX * 0.25 + time * 14)) % VIRTUAL_W + VIRTUAL_W) % VIRTUAL_W;
-      px(ctx, wx, FLOOR_MIN_Y - 30 + (w % 4) * 6, 14, 1.5, 'rgba(255, 255, 255, 0.65)');
+      px(ctx, wx, seaY + 6 + (w % 4) * 6, 14, 1.5, 'rgba(255, 255, 255, 0.65)');
     }
 
     const tileW = 128;
@@ -3786,10 +4007,12 @@ export function drawLevelBackground(
       const sx = wIdx * tileW - midScroll;
       const h = tileHash(wIdx, 22);
       const variant = h % 9;
-      const el = Math.round(getGroundElevation(2, camX + sx + tileW * 0.5));
+      const el = Math.round(getGroundElevation(2, camX + sx + tileW * 0.5) - camY);
 
       ctx.save();
       ctx.translate(0, el);
+      // Warm stone foundation skirt so coastal market stalls sit firmly on steep ramps
+      px(ctx, sx, FLOOR_MIN_Y - 4, 128, 96, '#A89F91');
 
       if (variant === 0) {
         // Sunlit Striped Market Stall with Wooden Fruit/Beer Crates & Awning Shadow
@@ -3919,22 +4142,29 @@ export function drawLevelBackground(
       ctx.restore();
     }
 
-    // Smooth Sloped Sunlit Sandstone/Concrete Market Street!
-    drawSlopedGroundSurface(ctx, 2, camX, '#CFC7B8', '#E7E2D8', '#9C9486');
+    // Steep Sloped Sunlit Sandstone/Concrete Market Street!
+    drawSlopedGroundSurface(ctx, 2, camX, camY, '#CFC7B8', '#E7E2D8', '#9C9486');
     const tScroll = Math.floor(camX / 56) - 1;
     for (let k = 0; k < 11; k++) {
       const idx = tScroll + k;
       const rx = idx * 56 - camX;
-      const rEl = getGroundElevation(2, idx * 56 + 24);
+      const rEl0 = getGroundElevation(2, idx * 56) - camY;
+      const rEl1 = getGroundElevation(2, idx * 56 + 46) - camY;
+      const rEl = getGroundElevation(2, idx * 56 + 24) - camY;
       // Warm sunlit paving joints & realistic daytime shadows
-      px(ctx, rx, FLOOR_MIN_Y + 7 + rEl, 1, VIRTUAL_H - FLOOR_MIN_Y, 'rgba(120, 113, 108, 0.35)');
-      px(ctx, rx + 8, 198 + rEl, 38, 1.5, 'rgba(120, 113, 108, 0.25)');
+      px(ctx, rx, FLOOR_MIN_Y + 9 + rEl0, 1, VIRTUAL_H - FLOOR_MIN_Y - 12, 'rgba(120, 113, 108, 0.35)');
+      ctx.strokeStyle = 'rgba(120, 113, 108, 0.28)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(rx + 8, 198 + rEl0);
+      ctx.lineTo(rx + 46, 198 + rEl1);
+      ctx.stroke();
       if (tileHash(idx, 27) % 4 === 0) {
         px(ctx, rx + 14, 184 + rEl, 20, 4, 'rgba(34, 197, 94, 0.24)'); // green beer spill
       }
       if (tileHash(idx, 29) % 5 === 1) {
         // Sunlit crosswalk stripes
-        for (let cy = FLOOR_MIN_Y + 14; cy < VIRTUAL_H - 12; cy += 14) {
+        for (let cy = FLOOR_MIN_Y + 16; cy < VIRTUAL_H - 12; cy += 14) {
           px(ctx, rx + 12, cy + rEl, 26, 6, 'rgba(255, 255, 255, 0.45)');
         }
       }
@@ -3944,21 +4174,22 @@ export function drawLevelBackground(
   // LEVEL 3 (DARK): NIGHT FACTORY PERIMETER — SEARCHLIGHTS & INDUSTRIAL WALLS
   // =========================================================================
   } else if (level.id === 3) {
-    drawCyberSkyline(ctx, level, camX, time);
+    drawCyberSkyline(ctx, level, camX, time, undefined, camY);
 
     // Distant colossal brewery cooling towers
     const siloScroll = Math.floor(camX * 0.35);
+    const towerYShift = Math.round(-camY * 0.2);
     for (let s = -1; s < 5; s++) {
       const sx = s * 164 - (siloScroll % 164);
       ctx.fillStyle = '#0D1924';
       ctx.beginPath();
-      ctx.moveTo(sx + 20, FLOOR_MIN_Y + 8);
-      ctx.lineTo(sx + 32, 38);
-      ctx.lineTo(sx + 74, 38);
-      ctx.lineTo(sx + 86, FLOOR_MIN_Y + 8);
+      ctx.moveTo(sx + 20, VIRTUAL_H + 120);
+      ctx.lineTo(sx + 32, 38 + towerYShift);
+      ctx.lineTo(sx + 74, 38 + towerYShift);
+      ctx.lineTo(sx + 86, VIRTUAL_H + 120);
       ctx.closePath();
       ctx.fill();
-      px(ctx, sx + 32, 42, 42, 3, '#39FF14');
+      px(ctx, sx + 32, 42 + towerYShift, 42, 3, '#39FF14');
     }
 
     // Sweeping security searchlights
@@ -3967,7 +4198,7 @@ export function drawLevelBackground(
       const tipX = originX + Math.sin(time * 1.45 + i * 2.1) * 74;
       ctx.fillStyle = 'rgba(0, 229, 255, 0.11)';
       ctx.beginPath();
-      ctx.moveTo(originX, FLOOR_MIN_Y);
+      ctx.moveTo(originX, VIRTUAL_H + 40);
       ctx.lineTo(tipX - 36, 0);
       ctx.lineTo(tipX + 36, 0);
       ctx.closePath();
@@ -3981,10 +4212,12 @@ export function drawLevelBackground(
       const fx = wIdx * tileW - midScroll;
       const h = tileHash(wIdx, 33);
       const variant = h % 8;
-      const el = Math.round(getGroundElevation(3, camX + fx + tileW * 0.5));
+      const el = Math.round(getGroundElevation(3, camX + fx + tileW * 0.5) - camY);
 
       ctx.save();
       ctx.translate(0, el);
+      // Grounded concrete industrial foundation skirt for steep factory ramps
+      px(ctx, fx, FLOOR_MIN_Y - 4, 124, 96, '#0E1520');
 
       if (variant === 0) {
         px(ctx, fx, 68, 120, 98, '#131D2A');
@@ -4099,13 +4332,20 @@ export function drawLevelBackground(
       ctx.restore();
     }
 
-    drawSlopedGroundSurface(ctx, 3, camX, '#121922', '#2B3A4D', '#070A0F');
+    drawSlopedGroundSurface(ctx, 3, camX, camY, '#121922', '#475569', '#070A0F');
     const cStart = Math.floor(camX / 72) - 1;
     for (let k = 0; k < 9; k++) {
       const idx = cStart + k;
       const rx = idx * 72 - camX;
-      const rEl = getGroundElevation(3, idx * 72 + 24);
-      px(ctx, rx, 198 + rEl, 38, 3, '#243244');
+      const rEl0 = getGroundElevation(3, idx * 72) - camY;
+      const rEl1 = getGroundElevation(3, idx * 72 + 38) - camY;
+      const rEl = getGroundElevation(3, idx * 72 + 24) - camY;
+      ctx.strokeStyle = '#243244';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(rx, 198 + rEl0);
+      ctx.lineTo(rx + 38, 198 + rEl1);
+      ctx.stroke();
       px(ctx, rx + 12, 168 + rEl, 22, 3, 'rgba(0,229,255,0.22)');
       px(ctx, rx + 40, 232 + rEl, 24, 4, 'rgba(57,255,20,0.16)');
     }
@@ -4116,25 +4356,26 @@ export function drawLevelBackground(
   } else if (level.id === 4) {
     const speedScroll = Math.floor(time * 380);
     const biome = camX < 2500 ? 0 : camX < 4600 ? 1 : camX < 7300 ? 2 : 3;
+    const hwYShift = Math.round(-camY * 0.24);
 
     if (biome === 1) {
       // BIOME 1: Brightly Lit Daytime Concrete Highway Tunnel with Warm Overhead Lamps
-      px(ctx, 0, 0, VIRTUAL_W, FLOOR_MIN_Y + 18, '#334155');
+      px(ctx, 0, 0, VIRTUAL_W, VIRTUAL_H, '#334155');
       px(ctx, 0, 0, VIRTUAL_W, 20, '#475569');
-      // Bright ceramic white lower tunnel wall tiles
-      px(ctx, 0, 82, VIRTUAL_W, FLOOR_MIN_Y - 64, '#CBD5E1');
+      // Bright ceramic white lower tunnel wall tiles extending past steep ramps
+      px(ctx, 0, 82 + hwYShift, VIRTUAL_W, VIRTUAL_H + 120, '#CBD5E1');
       for (let x = -(speedScroll % 96); x < VIRTUAL_W; x += 96) {
-        px(ctx, x, 16, 18, FLOOR_MIN_Y + 2, '#64748B');
+        px(ctx, x, 16, 18, VIRTUAL_H + 60, '#64748B');
         px(ctx, x + 30, 14, 34, 6, '#FEF08A');
         px(ctx, x + 32, 20, 30, 3, '#FFFFFF');
         // Warm overhead light wash
         ctx.fillStyle = 'rgba(254, 249, 195, 0.14)';
-        ctx.fillRect(x + 24, 22, 46, FLOOR_MIN_Y - 12);
+        ctx.fillRect(x + 24, 22, 46, VIRTUAL_H);
         // Reflective amber safety stripe along tunnel wall
-        px(ctx, x + 22, 118, 64, 4, '#F59E0B');
+        px(ctx, x + 22, 118 + hwYShift, 64, 4, '#F59E0B');
       }
     } else {
-      drawCyberSkyline(ctx, level, camX, time, speedScroll * 0.12);
+      drawCyberSkyline(ctx, level, camX, time, speedScroll * 0.12, camY);
 
       if (biome === 0) {
         // BIOME 0: Sunlit Coastal Highway with Pine/Cypress Hillsides & Realistic Blue Highway Signs
@@ -4144,23 +4385,24 @@ export function drawLevelBackground(
           const idx = hStart + k;
           const hx = idx * hillStep - Math.floor(speedScroll * 0.45);
           const hh = tileHash(idx, 41);
-          // Sunlit grassy coastal embankment
+          // Sunlit grassy coastal embankment extending cleanly below ramps
           ctx.fillStyle = hh % 2 === 0 ? '#4D7C0F' : '#65A30D';
           ctx.beginPath();
-          ctx.ellipse(hx + 74, FLOOR_MIN_Y + 6, 96, 36 + (hh % 18), 0, Math.PI, 0);
+          ctx.ellipse(hx + 74, FLOOR_MIN_Y + 6 + hwYShift, 96, 36 + (hh % 18), 0, Math.PI, 0);
           ctx.fill();
+          px(ctx, hx - 22, FLOOR_MIN_Y + 4 + hwYShift, 192, VIRTUAL_H, hh % 2 === 0 ? '#4D7C0F' : '#65A30D');
           // Roadside pine & cypress trees
           for (let tr = 0; tr < 3; tr++) {
             const tx = hx + 22 + tr * 44;
-            const ty = FLOOR_MIN_Y - 12 - ((hh + tr * 7) % 16);
+            const ty = FLOOR_MIN_Y - 12 - ((hh + tr * 7) % 16) + hwYShift;
             px(ctx, tx - 1.5, ty, 3, 22, '#78350F');
             drawRoundedPoly(ctx, [[tx - 9, ty + 4], [tx, ty - 22], [tx + 9, ty + 4]], '#15803D', INK, 0.8);
           }
         }
         // Overhead highway sign gantry (realistic Russian blue/white highway road sign!)
         for (let x = -(speedScroll % 260); x < VIRTUAL_W; x += 260) {
-          px(ctx, x + 10, 16, 7, FLOOR_MIN_Y, '#94A3B8');
-          px(ctx, x + 150, 16, 7, FLOOR_MIN_Y, '#94A3B8');
+          px(ctx, x + 10, 16, 7, VIRTUAL_H + 80, '#94A3B8');
+          px(ctx, x + 150, 16, 7, VIRTUAL_H + 80, '#94A3B8');
           px(ctx, x + 10, 18, 147, 5, '#CBD5E1');
           box(ctx, x + 36, 22, 96, 28, '#1D4ED8', '#FFFFFF', '#1E3A8A');
           ctx.fillStyle = '#FFFFFF';
@@ -4172,36 +4414,37 @@ export function drawLevelBackground(
         }
       } else if (biome === 2) {
         // BIOME 2: Sunlit Suspension Bridge Over Sparkling Turquoise Sea!
-        const bayG = ctx.createLinearGradient(0, FLOOR_MIN_Y - 34, 0, FLOOR_MIN_Y + 14);
+        const bayY = FLOOR_MIN_Y - 34 + hwYShift;
+        const bayG = ctx.createLinearGradient(0, bayY, 0, bayY + 70);
         bayG.addColorStop(0, '#0284C7');
         bayG.addColorStop(1, '#38BDF8');
         ctx.fillStyle = bayG;
-        ctx.fillRect(0, FLOOR_MIN_Y - 32, VIRTUAL_W, 46);
+        ctx.fillRect(0, bayY, VIRTUAL_W, VIRTUAL_H + 140);
         for (let w = 0; w < 16; w++) {
           const wx = ((w * 43 - Math.floor(time * 90)) % VIRTUAL_W + VIRTUAL_W) % VIRTUAL_W;
-          px(ctx, wx, FLOOR_MIN_Y - 24 + (w % 4) * 5, 22, 1.5, 'rgba(255,255,255,0.65)');
+          px(ctx, wx, bayY + 10 + (w % 4) * 5, 22, 1.5, 'rgba(255,255,255,0.65)');
         }
         // Crisp white/silver sunlit suspension bridge pylons & steel cables
         for (let x = -(Math.floor(speedScroll * 0.78) % 240); x < VIRTUAL_W + 240; x += 240) {
-          box(ctx, x, 6, 16, FLOOR_MIN_Y + 8, '#E2E8F0', '#FFFFFF', '#64748B');
-          px(ctx, x + 5, 10, 6, FLOOR_MIN_Y - 14, '#CBD5E1');
+          box(ctx, x, 6, 16, VIRTUAL_H + 80, '#E2E8F0', '#FFFFFF', '#64748B');
+          px(ctx, x + 5, 10, 6, VIRTUAL_H + 60, '#CBD5E1');
           ctx.strokeStyle = 'rgba(241, 245, 249, 0.85)';
           ctx.lineWidth = 1.2;
           ctx.beginPath();
           for (let c = 1; c <= 4; c++) {
             ctx.moveTo(x + 8, 12 + c * 10);
-            ctx.lineTo(x + 8 - c * 28, FLOOR_MIN_Y);
+            ctx.lineTo(x + 8 - c * 28, FLOOR_MIN_Y + hwYShift + 30);
             ctx.moveTo(x + 8, 12 + c * 10);
-            ctx.lineTo(x + 8 + c * 28, FLOOR_MIN_Y);
+            ctx.lineTo(x + 8 + c * 28, FLOOR_MIN_Y + hwYShift + 30);
           }
           ctx.stroke();
         }
       } else {
         // BIOME 3: Sunlit Industrial Viaduct Approaching Brewery!
         for (let x = -(Math.floor(speedScroll * 0.72) % 168); x < VIRTUAL_W + 168; x += 168) {
-          px(ctx, x + 16, 14, 10, FLOOR_MIN_Y, '#64748B');
+          px(ctx, x + 16, 14, 10, VIRTUAL_H + 80, '#64748B');
           px(ctx, x, 14, 168, 6, '#94A3B8');
-          box(ctx, x, 48, 168, 9, '#15803D', '#4ADE80', '#052E16');
+          box(ctx, x, 48 + Math.round(hwYShift * 0.5), 168, 9, '#15803D', '#4ADE80', '#052E16');
           // Daytime industrial exhaust vent plume
           const puff = (time * 32 + x) % 24;
           ctx.fillStyle = `rgba(255, 255, 255, ${0.55 * (1 - puff / 24)})`;
@@ -4212,8 +4455,8 @@ export function drawLevelBackground(
       }
     }
 
-    // Smooth Sloped Sun-Baked Gray Highway Asphalt + Silver Guardrail!
-    drawSlopedGroundSurface(ctx, 4, camX, '#46505D', '#CBD5E1', '#1E293B', '#64748B');
+    // Steep Sloped Sun-Baked Gray Highway Asphalt + Silver Guardrail!
+    drawSlopedGroundSurface(ctx, 4, camX, camY, '#46505D', '#CBD5E1', '#1E293B', '#64748B');
 
     // Sloped metal W-beam guardrail + orange reflectors along road edge
     ctx.strokeStyle = '#94A3B8';
@@ -4221,28 +4464,40 @@ export function drawLevelBackground(
     ctx.beginPath();
     for (let x = 0; x <= VIRTUAL_W + 12; x += 12) {
       const sx = Math.min(VIRTUAL_W, x);
-      const gy = FLOOR_MIN_Y - 5 + getGroundElevation(4, camX + sx);
+      const gy = FLOOR_MIN_Y - 5 + getGroundElevation(4, camX + sx) - camY;
       if (x === 0) ctx.moveTo(sx, gy);
       else ctx.lineTo(sx, gy);
     }
     ctx.stroke();
     for (let x = -(speedScroll % 44); x < VIRTUAL_W; x += 44) {
-      const gy = FLOOR_MIN_Y - 6 + getGroundElevation(4, camX + Math.max(0, x));
+      const gy = FLOOR_MIN_Y - 6 + getGroundElevation(4, camX + Math.max(0, x)) - camY;
       px(ctx, x, gy, 8, 3, '#F97316');
     }
 
-    // Sloped crisp white dashed highway lane markings
+    // Sloped crisp white dashed highway lane markings tilted along steep ramps!
+    ctx.strokeStyle = '#F8FAFC';
+    ctx.lineWidth = 3;
     for (const laneY of [184, 220]) {
       for (let x = -(speedScroll % 72); x < VIRTUAL_W; x += 72) {
-        const ly = laneY + getGroundElevation(4, camX + Math.max(0, x + 18));
-        px(ctx, x, ly, 36, 3, '#F8FAFC');
+        const y0 = laneY + getGroundElevation(4, camX + x) - camY;
+        const y1 = laneY + getGroundElevation(4, camX + x + 36) - camY;
+        ctx.beginPath();
+        ctx.moveTo(x, y0);
+        ctx.lineTo(x + 36, y1);
+        ctx.stroke();
       }
     }
     // Subtle sunlit asphalt wind-rush streaks
     for (let s = 0; s < 8; s++) {
       const lx = VIRTUAL_W - ((Math.floor(time * 540) + s * 91) % (VIRTUAL_W + 60));
-      const ly = 160 + (s * 11) % 88 + getGroundElevation(4, camX + Math.max(0, lx));
-      px(ctx, lx, ly, 22, 1, 'rgba(255,255,255,0.22)');
+      const ly0 = 160 + (s * 11) % 88 + getGroundElevation(4, camX + lx) - camY;
+      const ly1 = 160 + (s * 11) % 88 + getGroundElevation(4, camX + lx + 22) - camY;
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(lx, ly0);
+      ctx.lineTo(lx + 22, ly1);
+      ctx.stroke();
     }
 
   // =========================================================================
@@ -4251,7 +4506,7 @@ export function drawLevelBackground(
   } else {
     if (camX > 6400) {
       // ACT 3: DIRECTOR'S PANORAMIC SUNLIT GLASS PENTHOUSE (Daylight Boss Arena!)
-      drawCyberSkyline(ctx, level, camX * 0.4, time);
+      drawCyberSkyline(ctx, level, camX * 0.4, time, undefined, camY);
       // Warm diagonal golden sunbeams streaming through giant floor-to-ceiling windows!
       for (let r = 0; r < 4; r++) {
         const rx = 38 + r * 124;
@@ -4259,14 +4514,14 @@ export function drawLevelBackground(
         ctx.beginPath();
         ctx.moveTo(rx, 0);
         ctx.lineTo(rx + 46, 0);
-        ctx.lineTo(rx - 14, FLOOR_MIN_Y + 40);
-        ctx.lineTo(rx - 62, FLOOR_MIN_Y + 40);
+        ctx.lineTo(rx - 14, VIRTUAL_H + 40);
+        ctx.lineTo(rx - 62, VIRTUAL_H + 40);
         ctx.closePath();
         ctx.fill();
       }
       // Sleek architectural brushed-aluminum window mullions
       for (let x = -(midScroll % 96); x < VIRTUAL_W; x += 96) {
-        box(ctx, x, 0, 8, FLOOR_MIN_Y + 12, '#E2E8F0', '#FFFFFF', '#94A3B8');
+        box(ctx, x, 0, 8, VIRTUAL_H + 40, '#E2E8F0', '#FFFFFF', '#94A3B8');
       }
       // Crisp executive PIZED-77 corporate glass emblem
       const cx = VIRTUAL_W / 2;
@@ -4284,22 +4539,22 @@ export function drawLevelBackground(
       ctx.fillText('DIRECTOR PENTHOUSE', cx - 34, cy + 15);
 
       // Polished bright cream-marble penthouse floor with emerald geometric inlays!
-      drawSlopedGroundSurface(ctx, 6, camX, '#E5E7EB', '#F8FAFC', '#94A3B8');
+      drawSlopedGroundSurface(ctx, 6, camX, camY, '#E5E7EB', '#F8FAFC', '#94A3B8');
       const mStart = Math.floor(camX / 64) - 1;
       for (let k = 0; k < 10; k++) {
         const idx = mStart + k;
         const rx = idx * 64 - camX;
-        const rEl = getGroundElevation(6, idx * 64 + 24);
-        px(ctx, rx, FLOOR_MIN_Y + 6 + rEl, 1.5, VIRTUAL_H - FLOOR_MIN_Y, '#CBD5E1');
+        const rEl = getGroundElevation(6, idx * 64 + 24) - camY;
+        px(ctx, rx, FLOOR_MIN_Y + 8 + rEl, 1.5, VIRTUAL_H - FLOOR_MIN_Y - 12, '#CBD5E1');
         px(ctx, rx + 14, 198 + rEl, 30, 2, 'rgba(16, 185, 129, 0.28)');
       }
     } else if (camX > 3100) {
       // ACT 2: BRIGHT DAYLIGHT GLASS R&D LAB & STERILE MAINFRAME CORRIDOR
-      drawCyberSkyline(ctx, level, camX * 0.35, time);
+      drawCyberSkyline(ctx, level, camX * 0.35, time, undefined, camY);
       px(ctx, 0, 0, VIRTUAL_W, 18, '#E2E8F0');
       px(ctx, 0, 18, VIRTUAL_W, 3, '#94A3B8');
       // Bright interior wall backdrop with large upper clerestory daylight windows
-      px(ctx, 0, 62, VIRTUAL_W, FLOOR_MIN_Y - 46, '#E2E8F0');
+      px(ctx, 0, 62, VIRTUAL_W, VIRTUAL_H, '#E2E8F0');
 
       const tileW = 118;
       const startIdx = Math.floor(midScroll / tileW) - 1;
@@ -4308,10 +4563,11 @@ export function drawLevelBackground(
         const sx = wIdx * tileW - midScroll;
         const h = tileHash(wIdx, 62);
         const variant = h % 5;
-        const el = Math.round(getGroundElevation(6, camX + sx + tileW * 0.5));
+        const el = Math.round(getGroundElevation(6, camX + sx + tileW * 0.5) - camY);
 
         ctx.save();
         ctx.translate(0, el);
+        px(ctx, sx, FLOOR_MIN_Y - 4, 118, 96, '#CBD5E1');
         // Sunlit glass skylight frame
         box(ctx, sx + 6, 22, 106, 36, 'rgba(224,242,254,0.35)', '#FFFFFF', '#94A3B8');
 
@@ -4369,20 +4625,20 @@ export function drawLevelBackground(
         ctx.restore();
       }
 
-      drawSlopedGroundSurface(ctx, 6, camX, '#DCE4EE', '#F8FAFC', '#94A3B8');
+      drawSlopedGroundSurface(ctx, 6, camX, camY, '#DCE4EE', '#F8FAFC', '#94A3B8');
       const fStart = Math.floor(camX / 56) - 1;
       for (let k = 0; k < 10; k++) {
         const idx = fStart + k;
         const rx = idx * 56 - camX;
-        const rEl = getGroundElevation(6, idx * 56 + 24);
-        px(ctx, rx, FLOOR_MIN_Y + 6 + rEl, 1, VIRTUAL_H - FLOOR_MIN_Y, '#CBD5E1');
+        const rEl = getGroundElevation(6, idx * 56 + 24) - camY;
+        px(ctx, rx, FLOOR_MIN_Y + 8 + rEl, 1, VIRTUAL_H - FLOOR_MIN_Y - 12, '#CBD5E1');
         px(ctx, rx + 10, 206 + rEl, 24, 2, 'rgba(2,132,199,0.22)');
       }
     } else {
       // ACT 1: BRIGHT DAYLIGHT MODERN BREWERY HALL WITH SKYLIGHT SUNBEAMS!
-      drawCyberSkyline(ctx, level, camX * 0.3, time);
+      drawCyberSkyline(ctx, level, camX * 0.3, time, undefined, camY);
       // Bright light-steel architectural hall wall & overhead skylight beam
-      px(ctx, 0, 56, VIRTUAL_W, FLOOR_MIN_Y - 40, '#DCE4EC');
+      px(ctx, 0, 56, VIRTUAL_W, VIRTUAL_H, '#DCE4EC');
       px(ctx, 0, 16, VIRTUAL_W, 6, '#CBD5E1');
       px(ctx, 0, 22, VIRTUAL_W, 2, '#10B981');
 
@@ -4393,10 +4649,11 @@ export function drawLevelBackground(
         const vx = wIdx * tileW - midScroll;
         const h = tileHash(wIdx, 61);
         const variant = h % 5;
-        const el = Math.round(getGroundElevation(6, camX + vx + tileW * 0.5));
+        const el = Math.round(getGroundElevation(6, camX + vx + tileW * 0.5) - camY);
 
         ctx.save();
         ctx.translate(0, el);
+        px(ctx, vx, FLOOR_MIN_Y - 4, 116, 96, '#C4D0DE');
 
         // Diagonal golden daylight beam pouring through upper atrium window
         if (wIdx % 2 === 0) {
@@ -4469,27 +4726,28 @@ export function drawLevelBackground(
         ctx.restore();
       }
 
-      // Bright Polished Light-Epoxy Factory Floor + Green-Beer Conveyor Belt!
-      drawSlopedGroundSurface(ctx, 6, camX, '#CBD5E1', '#F1F5F9', '#64748B');
+      // Bright Polished Light-Epoxy Factory Floor + Sloped Green-Beer Conveyor Belt!
+      drawSlopedGroundSurface(ctx, 6, camX, camY, '#CBD5E1', '#F1F5F9', '#64748B');
       const bScroll = Math.floor(time * 75) % 24;
       for (let x = 0; x < VIRTUAL_W; x += 24) {
-        const bEl = getGroundElevation(6, camX + x);
-        px(ctx, x, FLOOR_MIN_Y + 7 + bEl, 24, 11, '#334155');
-        px(ctx, x - (bScroll % 24) + 12, FLOOR_MIN_Y + 9 + bEl, 8, 7, '#22C55E');
-        px(ctx, x - (bScroll % 24) + 14, FLOOR_MIN_Y + 8 + bEl, 4, 2, '#ECFCCB');
+        const bEl = getGroundElevation(6, camX + x) - camY;
+        px(ctx, x, FLOOR_MIN_Y + 9 + bEl, 24, 11, '#334155');
+        px(ctx, x - (bScroll % 24) + 12, FLOOR_MIN_Y + 11 + bEl, 8, 7, '#22C55E');
+        px(ctx, x - (bScroll % 24) + 14, FLOOR_MIN_Y + 10 + bEl, 4, 2, '#ECFCCB');
       }
     }
   }
 
   // Render monumental signature set-pieces & road hazards in world space
-  drawLevelLandmarks(ctx, level, camX, time);
+  drawLevelLandmarks(ctx, level, camX, time, camY);
 }
 
 function drawLevelLandmarks(
   ctx: CanvasRenderingContext2D,
   level: LevelDef,
   camX: number,
-  time: number
+  time: number,
+  camY = 0
 ): void {
   const pulse = 0.5 + 0.5 * Math.sin(time * 5.5);
 
@@ -4499,7 +4757,7 @@ function drawLevelLandmarks(
       const sx = Math.round(hz.x - camX);
       if (sx < -150 || sx > VIRTUAL_W + 150) continue;
 
-      const hzElev = Math.round(getGroundElevation(level.id, hz.x));
+      const hzElev = Math.round(getGroundElevation(level.id, hz.x) - camY);
       ctx.save();
       ctx.translate(0, hzElev);
 
@@ -4707,7 +4965,7 @@ function drawLevelLandmarks(
     const sx = Math.round(lm.x - camX);
     if (sx < -220 || sx > VIRTUAL_W + 220) continue;
 
-    const lmElev = Math.round(getGroundElevation(level.id, lm.x));
+    const lmElev = Math.round(getGroundElevation(level.id, lm.x) - camY);
     ctx.save();
     ctx.translate(0, lmElev);
 

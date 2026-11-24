@@ -19,7 +19,7 @@ import {
   VIRTUAL_H,
   VIRTUAL_W,
 } from './sprites';
-import { getGroundElevation, getGroundSlope } from './terrain';
+import { getCameraOffsetY, getGroundElevation, getGroundSlope } from './terrain';
 import {
   BossHudInfo,
   DifficultyId,
@@ -2811,7 +2811,8 @@ export class GameEngine {
 
     drawLevelBackground(ctx, activeLevel, camX, simTime, elevatorFloor);
 
-    const elevAt = (wx: number) => getGroundElevation(activeLevel.id, wx);
+    const camY = getCameraOffsetY(activeLevel.id, camX);
+    const elevAt = (wx: number) => getGroundElevation(activeLevel.id, wx) - camY;
 
     const renderZones = rf ? rf.zones : this.zones;
     for (const z of renderZones) {

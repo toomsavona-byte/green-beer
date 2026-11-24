@@ -738,10 +738,6 @@ export default function App() {
           onOpenLeaderboard={() => setLeaderboardOpen(true)}
           onStart={() => setScreen('CHAR_SELECT')}
           onOpenOnlineLobby={handleOpenOnlineLobby}
-          onPreviewFinale={() => {
-            setIsVictoryCutscene(false);
-            setScreen('VICTORY');
-          }}
         />
         {controlsModal}
         {iosFullscreenModal}

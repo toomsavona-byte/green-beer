@@ -1,8 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Gamepad2, Maximize2, Minimize2, Trophy, Volume2, VolumeX } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronRight,
+  Gamepad2,
+  Gauge,
+  Maximize2,
+  Minimize2,
+  Settings,
+  Trophy,
+  Volume2,
+  VolumeX,
+} from 'lucide-react';
+import { soundEngine } from '../game/audio';
 import { formatGamepadBinding, formatKeyCode } from '../game/controls';
 import { DIFFICULTIES, LEVELS, TITLE_ART_URL } from '../game/data';
-import { soundEngine } from '../game/audio';
 import { DifficultyId, GameSettings, LevelId, TouchControlsMode } from '../game/types';
 import { useGamepadMenuNav } from '../hooks/useGamepadMenuNav';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -24,27 +35,31 @@ interface TitleScreenProps {
   onOpenLeaderboard: () => void;
   onStart: () => void;
   onOpenOnlineLobby: () => void;
-  onPreviewFinale: () => void;
 }
+
+type MenuBranch = 'main' | 'difficulty' | 'settings';
 
 type FocusItemId =
   | '1p'
   | '2p'
   | 'online'
   | 'start'
+  | 'open_diff'
+  | 'open_settings'
+  | 'back'
   | 'diff_easy'
   | 'diff_normal'
   | 'diff_hard'
   | 'controls'
   | 'touch'
   | 'ff'
+  | 'crt'
   | 'lvl_1'
   | 'lvl_2'
   | 'lvl_3'
   | 'lvl_4'
   | 'lvl_5'
   | 'lvl_6'
-  | 'finale'
   | 'leaderboard'
   | 'fullscreen'
   | 'mute';
@@ -72,29 +87,53 @@ export function TitleScreen({
   onOpenLeaderboard,
   onStart,
   onOpenOnlineLobby,
-  onPreviewFinale,
 }: TitleScreenProps) {
   const [imgFailed, setImgFailed] = useState(false);
+  const [branch, setBranch] = useState<MenuBranch>('main');
   const [focusRow, setFocusRow] = useState(0);
   const [focusCol, setFocusCol] = useState(3); // Defaults to PRESS START
   const [gpNavActive, setGpNavActive] = useState(gamepadCount > 0);
 
-  const navRows = useMemo<FocusItemId[][]>(
-    () => [
-      ['1p', '2p', 'online', 'start'],
-      ['diff_easy', 'diff_normal', 'diff_hard', 'controls', 'touch', 'ff'],
-      ['lvl_1', 'lvl_2', 'lvl_3', 'lvl_4', 'lvl_5', 'lvl_6', 'finale'],
+  const currentDiffMeta =
+    DIFFICULTIES.find((d) => d.id === settings.difficulty) ?? DIFFICULTIES[1];
+
+  const topUtilityRow = useMemo<FocusItemId[]>(
+    () =>
       canShowFullscreen && onToggleFullscreen
         ? ['leaderboard', 'fullscreen', 'mute']
         : ['leaderboard', 'mute'],
-    ],
     [canShowFullscreen, onToggleFullscreen]
   );
+
+  const navRows = useMemo<FocusItemId[][]>(() => {
+    if (branch === 'difficulty') {
+      return [['diff_easy', 'diff_normal', 'diff_hard'], ['back'], topUtilityRow];
+    }
+    if (branch === 'settings') {
+      return [
+        ['controls', 'touch', 'ff', 'crt'],
+        ['lvl_1', 'lvl_2', 'lvl_3', 'lvl_4', 'lvl_5', 'lvl_6'],
+        ['back'],
+        topUtilityRow,
+      ];
+    }
+    return [
+      ['1p', '2p', 'online', 'start'],
+      ['open_diff', 'open_settings'],
+      topUtilityRow,
+    ];
+  }, [branch, topUtilityRow]);
 
   const safeRow = Math.min(focusRow, navRows.length - 1);
   const safeCol = Math.min(focusCol, navRows[safeRow].length - 1);
   const focusedId: FocusItemId | null = gpNavActive ? navRows[safeRow][safeCol] : null;
   const focusRing = (id: FocusItemId) => (focusedId === id ? 'gp-focus-ring' : '');
+
+  const switchBranch = (next: MenuBranch) => {
+    setBranch(next);
+    setFocusRow(0);
+    setFocusCol(next === 'main' ? 3 : 0);
+  };
 
   useEffect(() => {
     const clearGpHighlight = () => setGpNavActive(false);
@@ -105,6 +144,14 @@ export function TitleScreen({
   useEffect(() => {
     if (controlsModalOpen || iosGuideOpen || leaderboardOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Escape' && branch !== 'main') {
+        e.preventDefault();
+        soundEngine.unlock();
+        soundEngine.playMenuMove();
+        switchBranch('main');
+        return;
+      }
+      if (branch !== 'main') return;
       if (e.code === 'Enter' || e.code === 'Space') {
         e.preventDefault();
         soundEngine.unlock();
@@ -122,7 +169,7 @@ export function TitleScreen({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [controlsModalOpen, iosGuideOpen, leaderboardOpen, onStart, onUpdateSettings]);
+  }, [branch, controlsModalOpen, iosGuideOpen, leaderboardOpen, onStart, onUpdateSettings]);
 
   const toggleMute = () => {
     const next = !settings.muted;
@@ -158,17 +205,32 @@ export function TitleScreen({
         soundEngine.playMenuConfirm();
         onStart();
         break;
-      case 'diff_easy':
+      case 'open_diff':
         soundEngine.playMenuMove();
+        switchBranch('difficulty');
+        break;
+      case 'open_settings':
+        soundEngine.playMenuMove();
+        switchBranch('settings');
+        break;
+      case 'back':
+        soundEngine.playMenuMove();
+        switchBranch('main');
+        break;
+      case 'diff_easy':
+        soundEngine.playMenuConfirm();
         onUpdateSettings({ difficulty: 'easy' });
+        switchBranch('main');
         break;
       case 'diff_normal':
-        soundEngine.playMenuMove();
+        soundEngine.playMenuConfirm();
         onUpdateSettings({ difficulty: 'normal' });
+        switchBranch('main');
         break;
       case 'diff_hard':
-        soundEngine.playMenuMove();
+        soundEngine.playMenuConfirm();
         onUpdateSettings({ difficulty: 'hard' });
+        switchBranch('main');
         break;
       case 'controls':
         soundEngine.playMenuMove();
@@ -181,6 +243,10 @@ export function TitleScreen({
         soundEngine.playMenuMove();
         onUpdateSettings({ friendlyFire: !settings.friendlyFire });
         break;
+      case 'crt':
+        soundEngine.playMenuMove();
+        onUpdateSettings({ crtScanlines: !settings.crtScanlines });
+        break;
       case 'lvl_1':
       case 'lvl_2':
       case 'lvl_3':
@@ -192,10 +258,6 @@ export function TitleScreen({
         onUpdateSettings({ startLevel: lvl });
         break;
       }
-      case 'finale':
-        soundEngine.playMenuConfirm();
-        onPreviewFinale();
-        break;
       case 'leaderboard':
         soundEngine.playMenuConfirm();
         onOpenLeaderboard();
@@ -243,10 +305,19 @@ export function TitleScreen({
     onConfirm: () => {
       if (!gpNavActive) {
         setGpNavActive(true);
-        activateFocusedItem('start');
-        return;
+        if (branch === 'main') {
+          activateFocusedItem('start');
+          return;
+        }
       }
       activateFocusedItem(navRows[safeRow][safeCol]);
+    },
+    onBack: () => {
+      if (branch !== 'main') {
+        soundEngine.unlock();
+        soundEngine.playMenuMove();
+        switchBranch('main');
+      }
     },
     onStart: () => {
       soundEngine.unlock();
@@ -254,6 +325,13 @@ export function TitleScreen({
       onStart();
     },
   });
+
+  const diffAccentCls =
+    settings.difficulty === 'easy'
+      ? 'border-[#39FF14] text-[#39FF14] bg-[#162619]'
+      : settings.difficulty === 'normal'
+        ? 'border-[#FFB000] text-[#FFB000] bg-[#2B210E]'
+        : 'border-[#FF2A85] text-[#FF2A85] bg-[#36131E]';
 
   return (
     <div className="relative w-screen h-[100dvh] overflow-y-auto overflow-x-hidden bg-[#090C11] flex flex-col justify-between safe-area-inset">
@@ -284,7 +362,7 @@ export function TitleScreen({
         <div className="fixed inset-0 crt-scanlines pointer-events-none opacity-65" />
       )}
 
-      {/* Top minimal utility strip (Score + Sound toggle) */}
+      {/* Top minimal utility strip (Score + Top + Fullscreen + Sound — kept intact!) */}
       <div className="relative z-10 flex items-center justify-between gap-2 px-3 sm:px-6 pt-3 sm:pt-4">
         <div className="flex items-center gap-2 sm:gap-3 text-[11px] sm:text-xs text-[#A9B7C6] font-mono-num min-w-0 truncate">
           <span className="hidden sm:inline">SEGA 16-BIT EDITION</span>
@@ -358,14 +436,12 @@ export function TitleScreen({
             </linearGradient>
           </defs>
 
-          {/* Steel backing bar with rivets */}
           <rect x="64" y="12" width="632" height="58" fill="#131923" stroke="#39FF14" strokeWidth="2.5" />
           <circle cx="78" cy="24" r="3" fill="#64748B" />
           <circle cx="682" cy="24" r="3" fill="#64748B" />
           <circle cx="78" cy="58" r="3" fill="#64748B" />
           <circle cx="682" cy="58" r="3" fill="#64748B" />
 
-          {/* Top line: GREEN BEER */}
           <text
             x="380"
             y="55"
@@ -381,7 +457,6 @@ export function TitleScreen({
             GREEN BEER
           </text>
 
-          {/* Bottom jagged impact plate: PIZEDES */}
           <polygon
             points="110,74 650,74 668,142 92,142"
             fill="#1A1210"
@@ -402,7 +477,6 @@ export function TitleScreen({
           >
             PIZEDES
           </text>
-          {/* Neon green accent underline */}
           <rect x="136" y="138" width="488" height="4" fill="#39FF14" />
         </svg>
 
@@ -411,186 +485,287 @@ export function TitleScreen({
         </p>
       </div>
 
-      {/* Bottom Interactive Arcade Launch Deck */}
+      {/* Bottom Branched Interactive Arcade Menu Deck */}
       <div className="relative z-10 flex flex-col items-center gap-2 sm:gap-3 px-3 sm:px-6 pb-3 sm:pb-5">
         <div className="w-full max-w-3xl bg-[#0D121A]/92 border border-[#2B3648] px-3.5 sm:px-5 py-3 sm:py-4 flex flex-col gap-2.5 sm:gap-3.5">
-          {/* Row 1: Mode + Primary Start CTA */}
-          <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-4">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  soundEngine.unlock();
-                  soundEngine.playMenuMove();
-                  onUpdateSettings({ players: 1 });
-                }}
-                className={`px-3.5 sm:px-4 min-h-[42px] sm:min-h-0 sm:py-2 text-xs sm:text-sm font-display font-bold tracking-wider border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  settings.players === 1
-                    ? 'bg-[#39FF14] text-[#090C11] border-[#39FF14]'
-                    : 'bg-[#141A24] text-[#CBD5E1] border-[#2B3648] hover:border-[#39FF14]'
-                } ${focusRing('1p')}`}
-              >
-                1 PLAYER
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  soundEngine.unlock();
-                  soundEngine.playMenuMove();
-                  onUpdateSettings({ players: 2 });
-                }}
-                className={`px-3 sm:px-3.5 min-h-[42px] sm:min-h-0 sm:py-2 text-xs sm:text-sm font-display font-bold tracking-wider border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  settings.players === 2
-                    ? 'bg-[#00E5FF] text-[#090C11] border-[#00E5FF]'
-                    : 'bg-[#141A24] text-[#CBD5E1] border-[#2B3648] hover:border-[#00E5FF]'
-                } ${focusRing('2p')}`}
-              >
-                2P ЛОКАЛЬНО
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  soundEngine.unlock();
-                  soundEngine.playMenuConfirm();
-                  onOpenOnlineLobby();
-                }}
-                className={`px-3 sm:px-3.5 min-h-[42px] sm:min-h-0 sm:py-2 text-xs sm:text-sm font-display font-bold tracking-wider border bg-[#10272E] text-[#00E5FF] border-[#00E5FF] hover:bg-[#00E5FF] hover:text-[#090C11] transition-colors cursor-pointer whitespace-nowrap shrink-0 ${focusRing('online')}`}
-              >
-                ОНЛАЙН 2P
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                soundEngine.unlock();
-                soundEngine.playMenuConfirm();
-                onStart();
-              }}
-              className={`flex-1 sm:flex-initial px-5 sm:px-7 min-h-[44px] sm:min-h-0 sm:py-2.5 bg-[#FF2A85] hover:bg-[#FF4696] text-white font-display font-bold text-sm sm:text-base tracking-widest border border-[#FF85B8] transition-transform active:scale-95 cursor-pointer whitespace-nowrap shrink-0 ${focusRing('start')}`}
-            >
-              PRESS START · ВЫБОР БОЙЦОВ
-            </button>
-          </div>
-
-          {/* Row 2: Difficulty (Easy/Normal/Hard) + Platform Controls + Friendly Fire */}
-          <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 pt-2 sm:pt-2.5 border-t border-[#1E293B]">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[11px] sm:text-xs text-[#94A3B8] mr-0.5 font-mono-num">СЛОЖНОСТЬ:</span>
-              {DIFFICULTIES.map((diff) => {
-                const active = settings.difficulty === diff.id;
-                const activeStyle =
-                  diff.id === 'easy'
-                    ? 'bg-[#1F2D22] text-[#39FF14] border-[#39FF14]'
-                    : diff.id === 'normal'
-                      ? 'bg-[#2E2410] text-[#FFB000] border-[#FFB000]'
-                      : 'bg-[#3B1520] text-[#FF2A85] border-[#FF2A85]';
-                return (
+          {branch === 'main' && (
+            <>
+              {/* Row 1: Players Count + Primary Fighter Select CTA */}
+              <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-4">
+                <div className="flex items-center gap-2 flex-wrap">
                   <button
-                    key={diff.id}
                     type="button"
-                    title={diff.description}
                     onClick={() => {
                       soundEngine.unlock();
                       soundEngine.playMenuMove();
-                      onUpdateSettings({ difficulty: diff.id as DifficultyId });
+                      onUpdateSettings({ players: 1 });
                     }}
-                    className={`px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-[11px] sm:text-xs font-mono-num font-bold border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                      active
-                        ? activeStyle
-                        : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
-                    } ${focusRing(`diff_${diff.id}` as FocusItemId)}`}
+                    className={`px-3.5 sm:px-4 min-h-[42px] sm:min-h-0 sm:py-2 text-xs sm:text-sm font-display font-bold tracking-wider border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                      settings.players === 1
+                        ? 'bg-[#39FF14] text-[#090C11] border-[#39FF14]'
+                        : 'bg-[#141A24] text-[#CBD5E1] border-[#2B3648] hover:border-[#39FF14]'
+                    } ${focusRing('1p')}`}
                   >
-                    {diff.label}
+                    1 PLAYER
                   </button>
-                );
-              })}
-            </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundEngine.unlock();
+                      soundEngine.playMenuMove();
+                      onUpdateSettings({ players: 2 });
+                    }}
+                    className={`px-3 sm:px-3.5 min-h-[42px] sm:min-h-0 sm:py-2 text-xs sm:text-sm font-display font-bold tracking-wider border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                      settings.players === 2
+                        ? 'bg-[#00E5FF] text-[#090C11] border-[#00E5FF]'
+                        : 'bg-[#141A24] text-[#CBD5E1] border-[#2B3648] hover:border-[#00E5FF]'
+                    } ${focusRing('2p')}`}
+                  >
+                    2P ЛОКАЛЬНО
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundEngine.unlock();
+                      soundEngine.playMenuConfirm();
+                      onOpenOnlineLobby();
+                    }}
+                    className={`px-3 sm:px-3.5 min-h-[42px] sm:min-h-0 sm:py-2 text-xs sm:text-sm font-display font-bold tracking-wider border bg-[#10272E] text-[#00E5FF] border-[#00E5FF] hover:bg-[#00E5FF] hover:text-[#090C11] transition-colors cursor-pointer whitespace-nowrap shrink-0 ${focusRing('online')}`}
+                  >
+                    ОНЛАЙН 2P
+                  </button>
+                </div>
 
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <button
-                type="button"
-                onClick={() => {
-                  soundEngine.unlock();
-                  soundEngine.playMenuMove();
-                  onOpenControls();
-                }}
-                className={`flex items-center gap-1.5 px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-[11px] sm:text-xs font-mono-num font-bold border bg-[#1F2D22] text-[#39FF14] border-[#39FF14] hover:bg-[#39FF14] hover:text-[#090C11] transition-colors cursor-pointer whitespace-nowrap shrink-0 ${focusRing('controls')}`}
-              >
-                <Gamepad2 className="w-3.5 h-3.5" />
-                КНОПКИ
-              </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.unlock();
+                    soundEngine.playMenuConfirm();
+                    onStart();
+                  }}
+                  className={`flex-1 sm:flex-initial px-5 sm:px-7 min-h-[44px] sm:min-h-0 sm:py-2.5 bg-[#FF2A85] hover:bg-[#FF4696] text-white font-display font-bold text-sm sm:text-base tracking-widest border border-[#FF85B8] transition-transform active:scale-95 cursor-pointer whitespace-nowrap shrink-0 ${focusRing('start')}`}
+                >
+                  PRESS START · ВЫБОР БОЙЦОВ
+                </button>
+              </div>
 
-              <button
-                type="button"
-                onClick={cycleTouchMode}
-                className={`px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-[11px] sm:text-xs font-mono-num border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  showTouchControls
-                    ? 'bg-[#10272E] text-[#00E5FF] border-[#00E5FF]'
-                    : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
-                } ${focusRing('touch')}`}
-              >
-                СЕНСОР: {TOUCH_MODE_LABELS[settings.touchControlsMode]}
-              </button>
+              {/* Row 2: Clean Menu Branches — Difficulty & Settings */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2.5 border-t border-[#1E293B]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.unlock();
+                    soundEngine.playMenuMove();
+                    switchBranch('difficulty');
+                  }}
+                  className={`flex items-center justify-between gap-2 px-3.5 min-h-[42px] sm:min-h-0 sm:py-2.5 border transition-colors cursor-pointer ${diffAccentCls} hover:brightness-115 ${focusRing('open_diff')}`}
+                >
+                  <span className="flex items-center gap-2 font-display font-bold text-xs sm:text-sm tracking-wider">
+                    <Gauge className="w-4 h-4 shrink-0" />
+                    <span>СЛОЖНОСТЬ: {currentDiffMeta.label}</span>
+                  </span>
+                  <ChevronRight className="w-4 h-4 shrink-0 opacity-80" />
+                </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  soundEngine.unlock();
-                  soundEngine.playMenuMove();
-                  onUpdateSettings({ friendlyFire: !settings.friendlyFire });
-                }}
-                className={`px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-[11px] sm:text-xs font-mono-num border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  settings.friendlyFire
-                    ? 'bg-[#3B1520] text-[#FF2A85] border-[#FF2A85]'
-                    : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
-                } ${focusRing('ff')}`}
-              >
-                FF: {settings.friendlyFire ? 'ВКЛ' : 'ВЫКЛ'}
-              </button>
-            </div>
-          </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.unlock();
+                    soundEngine.playMenuMove();
+                    switchBranch('settings');
+                  }}
+                  className={`flex items-center justify-between gap-2 px-3.5 min-h-[42px] sm:min-h-0 sm:py-2.5 bg-[#141A24] border border-[#2B3648] hover:border-[#00E5FF] text-[#E6EDF3] hover:text-[#00E5FF] transition-colors cursor-pointer ${focusRing('open_settings')}`}
+                >
+                  <span className="flex items-center gap-2 font-display font-bold text-xs sm:text-sm tracking-wider">
+                    <Settings className="w-4 h-4 shrink-0" />
+                    <span>НАСТРОЙКИ</span>
+                  </span>
+                  <span className="flex items-center gap-1.5 text-[11px] font-mono-num text-[#94A3B8]">
+                    <span>УР. {settings.startLevel}</span>
+                    <ChevronRight className="w-4 h-4 shrink-0" />
+                  </span>
+                </button>
+              </div>
+            </>
+          )}
 
-          {/* Row 3: Level Select (1–6) */}
-          <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-[#1E293B]">
-            <span className="text-[11px] sm:text-xs text-[#94A3B8] mr-0.5 font-mono-num">УРОВЕНЬ:</span>
-            {LEVELS.map((lvl) => (
-              <button
-                key={lvl.id}
-                type="button"
-                onClick={() => {
-                  soundEngine.unlock();
-                  soundEngine.playMenuMove();
-                  onUpdateSettings({ startLevel: lvl.id as LevelId });
-                }}
-                className={`px-2 sm:px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-[11px] sm:text-xs font-mono-num border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  settings.startLevel === lvl.id
-                    ? 'bg-[#1F2D22] text-[#39FF14] border-[#39FF14]'
-                    : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
-                } ${focusRing(`lvl_${lvl.id}` as FocusItemId)}`}
-              >
-                {lvl.shortName}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => {
-                soundEngine.unlock();
-                soundEngine.playMenuConfirm();
-                onPreviewFinale();
-              }}
-              className={`px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-[11px] sm:text-xs font-mono-num font-bold border border-[#FF40A8] bg-[#2D1028] text-[#FEF08A] hover:bg-[#FF40A8] hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0 ${focusRing('finale')}`}
-            >
-              ★ ФИНАЛ
-            </button>
-          </div>
+          {branch === 'difficulty' && (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Gauge className="w-4 h-4 text-[#FFB000]" />
+                  <span className="font-display font-bold text-xs sm:text-sm tracking-[0.16em] text-[#E6EDF3] uppercase">
+                    ВЫБОР СЛОЖНОСТИ
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.unlock();
+                    soundEngine.playMenuMove();
+                    switchBranch('main');
+                  }}
+                  className={`flex items-center gap-1.5 px-3 min-h-[34px] sm:min-h-0 sm:py-1 bg-[#141A24] border border-[#2B3648] hover:border-[#39FF14] text-xs font-mono-num text-[#CBD5E1] hover:text-[#39FF14] transition-colors cursor-pointer ${focusRing('back')}`}
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>НАЗАД</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {DIFFICULTIES.map((diff) => {
+                  const active = settings.difficulty === diff.id;
+                  const activeStyle =
+                    diff.id === 'easy'
+                      ? 'bg-[#1A2B1D] text-[#39FF14] border-[#39FF14]'
+                      : diff.id === 'normal'
+                        ? 'bg-[#2E2410] text-[#FFB000] border-[#FFB000]'
+                        : 'bg-[#3B1520] text-[#FF2A85] border-[#FF2A85]';
+                  return (
+                    <button
+                      key={diff.id}
+                      type="button"
+                      onClick={() => {
+                        soundEngine.unlock();
+                        soundEngine.playMenuConfirm();
+                        onUpdateSettings({ difficulty: diff.id as DifficultyId });
+                        switchBranch('main');
+                      }}
+                      className={`px-3.5 py-2.5 text-left border transition-colors cursor-pointer flex flex-col gap-1 ${
+                        active
+                          ? activeStyle
+                          : 'bg-[#141A24] text-[#CBD5E1] border-[#2B3648] hover:border-[#94A3B8] hover:text-white'
+                      } ${focusRing(`diff_${diff.id}` as FocusItemId)}`}
+                    >
+                      <span className="font-display font-bold text-sm tracking-wider">
+                        {diff.label}
+                      </span>
+                      <span className="text-[11px] font-mono-num text-[#94A3B8] leading-snug">
+                        {diff.description}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {branch === 'settings' && (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-[#00E5FF]" />
+                  <span className="font-display font-bold text-xs sm:text-sm tracking-[0.16em] text-[#E6EDF3] uppercase">
+                    НАСТРОЙКИ И ВЫБОР УРОВНЯ
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.unlock();
+                    soundEngine.playMenuMove();
+                    switchBranch('main');
+                  }}
+                  className={`flex items-center gap-1.5 px-3 min-h-[34px] sm:min-h-0 sm:py-1 bg-[#141A24] border border-[#2B3648] hover:border-[#39FF14] text-xs font-mono-num text-[#CBD5E1] hover:text-[#39FF14] transition-colors cursor-pointer ${focusRing('back')}`}
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>НАЗАД</span>
+                </button>
+              </div>
+
+              {/* Controls, Touch Mode, Friendly Fire, CRT Scanlines */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.unlock();
+                    soundEngine.playMenuMove();
+                    onOpenControls();
+                  }}
+                  className={`flex items-center gap-1.5 px-3 min-h-[38px] sm:min-h-0 sm:py-1.5 text-xs font-mono-num font-bold border bg-[#1F2D22] text-[#39FF14] border-[#39FF14] hover:bg-[#39FF14] hover:text-[#090C11] transition-colors cursor-pointer whitespace-nowrap shrink-0 ${focusRing('controls')}`}
+                >
+                  <Gamepad2 className="w-3.5 h-3.5" />
+                  КНОПКИ
+                </button>
+
+                <button
+                  type="button"
+                  onClick={cycleTouchMode}
+                  className={`px-3 min-h-[38px] sm:min-h-0 sm:py-1.5 text-xs font-mono-num border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    showTouchControls
+                      ? 'bg-[#10272E] text-[#00E5FF] border-[#00E5FF]'
+                      : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
+                  } ${focusRing('touch')}`}
+                >
+                  СЕНСОР: {TOUCH_MODE_LABELS[settings.touchControlsMode]}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.unlock();
+                    soundEngine.playMenuMove();
+                    onUpdateSettings({ friendlyFire: !settings.friendlyFire });
+                  }}
+                  className={`px-3 min-h-[38px] sm:min-h-0 sm:py-1.5 text-xs font-mono-num border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    settings.friendlyFire
+                      ? 'bg-[#3B1520] text-[#FF2A85] border-[#FF2A85]'
+                      : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
+                  } ${focusRing('ff')}`}
+                >
+                  FF (ОГОНЬ ПО СВОИМ): {settings.friendlyFire ? 'ВКЛ' : 'ВЫКЛ'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.unlock();
+                    soundEngine.playMenuMove();
+                    onUpdateSettings({ crtScanlines: !settings.crtScanlines });
+                  }}
+                  className={`px-3 min-h-[38px] sm:min-h-0 sm:py-1.5 text-xs font-mono-num border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    settings.crtScanlines
+                      ? 'bg-[#1E2438] text-[#A5B4FC] border-[#818CF8]'
+                      : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
+                  } ${focusRing('crt')}`}
+                >
+                  CRT: {settings.crtScanlines ? 'ВКЛ' : 'ВЫКЛ'}
+                </button>
+              </div>
+
+              {/* Start Level Select (1–6 only; Finale level hidden!) */}
+              <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-[#1E293B]">
+                <span className="text-[11px] sm:text-xs text-[#94A3B8] mr-0.5 font-mono-num">
+                  СТАРТОВЫЙ УРОВЕНЬ:
+                </span>
+                {LEVELS.map((lvl) => (
+                  <button
+                    key={lvl.id}
+                    type="button"
+                    onClick={() => {
+                      soundEngine.unlock();
+                      soundEngine.playMenuMove();
+                      onUpdateSettings({ startLevel: lvl.id as LevelId });
+                    }}
+                    className={`px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-xs font-mono-num border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                      settings.startLevel === lvl.id
+                        ? 'bg-[#1F2D22] text-[#39FF14] border-[#39FF14]'
+                        : 'bg-[#141A24] text-[#94A3B8] border-[#2B3648] hover:text-white'
+                    } ${focusRing(`lvl_${lvl.id}` as FocusItemId)}`}
+                  >
+                    {lvl.shortName}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Dynamic Platform Control Hint Line */}
         <div className="text-[11px] sm:text-xs text-[#94A3B8] font-mono-num tracking-wide text-center">
           {gamepadCount > 0 ? (
             <>
-              Джойстик ({gamepadCount}): Стик/D-Pad навигация · A/✕ выбрать · START в бой · В бою:{' '}
+              Джойстик ({gamepadCount}): Стик/D-Pad навигация · A/✕ выбрать · B/○ назад · START в бой · В бою:{' '}
               {formatGamepadBinding(settings.controls.gamepad.shoot)} Огонь ·{' '}
               {formatGamepadBinding(settings.controls.gamepad.melee)} Удар ·{' '}
               {formatGamepadBinding(settings.controls.gamepad.jump)} Прыжок
