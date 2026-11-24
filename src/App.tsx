@@ -5,6 +5,7 @@ import { CutsceneView } from './components/CutsceneView';
 import { EndlessFinaleView } from './components/EndlessFinaleView';
 import { GameHud } from './components/GameHud';
 import { GameModals } from './components/GameModals';
+import { OfflineIndicator } from './components/OfflineIndicator';
 import { OnlineLobby } from './components/OnlineLobby';
 import { TitleScreen } from './components/TitleScreen';
 import { TouchControls } from './components/TouchControls';
@@ -135,10 +136,43 @@ export default function App() {
     engineRef.current?.clearVirtualInput();
   }, []);
 
-  // Global first-gesture audio unlock so chiptune BGM starts smoothly
+  // Request landscape orientation on mobile browsers/PWA when triggered by user gesture
+  const requestLandscapeLock = useCallback(async () => {
+    try {
+      const rootEl = document.documentElement as HTMLElement & {
+        webkitRequestFullscreen?: () => Promise<void>;
+      };
+      if (!document.fullscreenElement) {
+        if (rootEl.requestFullscreen) {
+          await rootEl.requestFullscreen().catch(() => {});
+        } else if (rootEl.webkitRequestFullscreen) {
+          await rootEl.webkitRequestFullscreen().catch(() => {});
+        }
+      }
+      const orientation = window.screen.orientation as ScreenOrientation & {
+        lock?: (o: string) => Promise<void>;
+      };
+      if (orientation?.lock) {
+        await orientation.lock('landscape').catch(() => {});
+      }
+    } catch {
+      // Orientation lock is ignored on unsupported browsers; APK enforces it natively.
+    }
+  }, []);
+
+  // Global first-gesture audio unlock + automatic landscape lock attempt in installed PWA
   useEffect(() => {
     const unlockOnce = () => {
       soundEngine.unlock();
+      const isStandalone =
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.matchMedia('(display-mode: fullscreen)').matches;
+      if (isStandalone && platformRef.current.isTouchDevice) {
+        const orientation = window.screen.orientation as ScreenOrientation & {
+          lock?: (o: string) => Promise<void>;
+        };
+        orientation?.lock?.('landscape').catch(() => {});
+      }
     };
     window.addEventListener('pointerdown', unlockOnce, { once: true });
     window.addEventListener('keydown', unlockOnce, { once: true });
@@ -603,92 +637,113 @@ export default function App() {
 
   if (screen === 'TITLE_MENU') {
     return (
-      <TitleScreen
-        settings={settings}
-        highScore={highScore}
-        showTouchControls={platform.showTouchControls}
-        isTouchDevice={platform.isTouchDevice}
-        gamepadCount={platform.gamepadCount}
-        onUpdateSettings={handleUpdateSettings}
-        onStart={() => setScreen('CHAR_SELECT')}
-        onOpenOnlineLobby={handleOpenOnlineLobby}
-      />
+      <>
+        <TitleScreen
+          settings={settings}
+          highScore={highScore}
+          showTouchControls={platform.showTouchControls}
+          isTouchDevice={platform.isTouchDevice}
+          gamepadCount={platform.gamepadCount}
+          onUpdateSettings={handleUpdateSettings}
+          onStart={() => setScreen('CHAR_SELECT')}
+          onOpenOnlineLobby={handleOpenOnlineLobby}
+          onPreviewFinale={() => {
+            setIsVictoryCutscene(false);
+            setScreen('VICTORY');
+          }}
+        />
+        <OfflineIndicator />
+      </>
     );
   }
 
   if (screen === 'ONLINE_LOBBY') {
     return (
-      <OnlineLobby
-        connected={onlineConnected}
-        room={onlineRoom}
-        role={onlineRole}
-        openRooms={openRooms}
-        errorMsg={onlineError}
-        settings={settings}
-        onBack={() => {
-          onlineClient.disconnect();
-          setOnlineRoom(null);
-          setOnlineRole(null);
-          setScreen('TITLE_MENU');
-        }}
-        onCreateRoom={handleCreateRoom}
-        onJoinRoom={handleJoinRoom}
-        onLeaveRoom={handleLeaveRoom}
-        onRefreshRooms={() => onlineClient.requestRoomList()}
-        onSelectHero={(heroId: HeroId) => onlineClient.selectHero(heroId)}
-        onToggleReady={(ready: boolean) => onlineClient.setReady(ready)}
-        onUpdateRoomSettings={(partial: {
-          difficulty?: DifficultyId;
-          levelId?: LevelId;
-          friendlyFire?: boolean;
-        }) => onlineClient.updateLobbySettings(partial)}
-        onStartOnlineGame={handleStartOnlineGame}
-      />
+      <>
+        <OnlineLobby
+          connected={onlineConnected}
+          room={onlineRoom}
+          role={onlineRole}
+          openRooms={openRooms}
+          errorMsg={onlineError}
+          settings={settings}
+          onBack={() => {
+            onlineClient.disconnect();
+            setOnlineRoom(null);
+            setOnlineRole(null);
+            setScreen('TITLE_MENU');
+          }}
+          onCreateRoom={handleCreateRoom}
+          onJoinRoom={handleJoinRoom}
+          onLeaveRoom={handleLeaveRoom}
+          onRefreshRooms={() => onlineClient.requestRoomList()}
+          onSelectHero={(heroId: HeroId) => onlineClient.selectHero(heroId)}
+          onToggleReady={(ready: boolean) => onlineClient.setReady(ready)}
+          onUpdateRoomSettings={(partial: {
+            difficulty?: DifficultyId;
+            levelId?: LevelId;
+            friendlyFire?: boolean;
+          }) => onlineClient.updateLobbySettings(partial)}
+          onStartOnlineGame={handleStartOnlineGame}
+        />
+        <OfflineIndicator />
+      </>
     );
   }
 
   if (screen === 'CHAR_SELECT') {
     return (
-      <CharacterSelect
-        players={settings.players}
-        startLevel={settings.startLevel}
-        isTouchDevice={platform.isTouchDevice}
-        onBack={() => setScreen('TITLE_MENU')}
-        onConfirm={handleConfirmHeroes}
-      />
+      <>
+        <CharacterSelect
+          players={settings.players}
+          startLevel={settings.startLevel}
+          isTouchDevice={platform.isTouchDevice}
+          isPortrait={platform.isPortrait}
+          onRequestLandscape={requestLandscapeLock}
+          onBack={() => setScreen('TITLE_MENU')}
+          onConfirm={handleConfirmHeroes}
+        />
+        <OfflineIndicator />
+      </>
     );
   }
 
   if (screen === 'CUTSCENE') {
     const activeCutscene = isVictoryCutscene ? VICTORY_CUTSCENE : CUTSCENES[currentLevel];
     return (
-      <CutsceneView
-        cutscene={activeCutscene}
-        crtScanlines={settings.crtScanlines}
-        isTouchDevice={platform.isTouchDevice}
-        renderScale={platform.recommendedRenderScale}
-        isOnlineGuest={onlineRole === 'guest'}
-        syncLineIndex={onlineRole === 'guest' ? guestCutsceneLine : undefined}
-        onLineChange={
-          onlineRole === 'host' ? (idx) => onlineClient.sendCutsceneSync(idx) : undefined
-        }
-        onComplete={handleCutsceneComplete}
-      />
+      <>
+        <CutsceneView
+          cutscene={activeCutscene}
+          crtScanlines={settings.crtScanlines}
+          isTouchDevice={platform.isTouchDevice}
+          renderScale={platform.recommendedRenderScale}
+          isOnlineGuest={onlineRole === 'guest'}
+          syncLineIndex={onlineRole === 'guest' ? guestCutsceneLine : undefined}
+          onLineChange={
+            onlineRole === 'host' ? (idx) => onlineClient.sendCutsceneSync(idx) : undefined
+          }
+          onComplete={handleCutsceneComplete}
+        />
+        <OfflineIndicator />
+      </>
     );
   }
 
   if (screen === 'VICTORY') {
     return (
-      <EndlessFinaleView
-        score={carryScore}
-        highScore={highScore}
-        crtScanlines={settings.crtScanlines}
-        muted={settings.muted}
-        isTouchDevice={platform.isTouchDevice}
-        renderScale={platform.recommendedRenderScale}
-        onToggleMute={handleToggleMute}
-        onReturnTitle={handleReturnTitle}
-      />
+      <>
+        <EndlessFinaleView
+          score={carryScore}
+          highScore={highScore}
+          crtScanlines={settings.crtScanlines}
+          muted={settings.muted}
+          isTouchDevice={platform.isTouchDevice}
+          renderScale={platform.recommendedRenderScale}
+          onToggleMute={handleToggleMute}
+          onReturnTitle={handleReturnTitle}
+        />
+        <OfflineIndicator />
+      </>
     );
   }
 
@@ -768,6 +823,7 @@ export default function App() {
         onReturnTitle={handleReturnTitle}
         onUpdateSettings={handleUpdateSettings}
       />
+      <OfflineIndicator />
     </div>
   );
 }

@@ -133,12 +133,12 @@ const BIOMES: BiomePalette[] = [
 ];
 
 const EPILOGUE_LINES = [
-  'ЗАВОД «ПИЗЕД ВОРЛД» УНИЧТОЖЕН — ЗЕЛЁНОЕ ПИВО НАВСЕГДА В ПРОШЛОМ',
-  'ВАДЁК ДАВИТ НА ГАЗ, ФУРГОН «ALUPKA 77» МЧИТ НАВСТРЕЧУ РАССВЕТУ',
-  'САНДРО И КРАСНЫЙ УЖЕ ДОСТАЛИ ОХЛАЖДЁННЫЙ КРАФТ ИЗ БАГАЖНИКА',
-  'ДЕД ОТКРЫЛ ФОРТОЧКУ — ЗА ФУРГОНОМ ТЯНЕТСЯ ЛЁГКИЙ ШЛЕЙФ МИРА И ДОБРА',
-  'СЕРЫЙ И БАМБА СПОРЯТ, ГДЕ ЛУЧШИЙ СЁРФИНГ: В МАЛИБУ ИЛИ ПОД АЛУПКОЙ',
-  'ХУПЕР КРУТИТ КАССЕТУ С СИНТИВЕЙВОМ, ДИМАН РАЗДАЁТ WI-FI С КРЫШИ',
+  'ЗАВОД «ЗЕЛЁНЫЙ ПОТОК» УНИЧТОЖЕН — ЗЕЛЁНОЕ ПИВО НАВСЕГДА В ПРОШЛОМ',
+  'VADEK ДАВИТ НА ГАЗ, ФУРГОН «ALUPKA 77» МЧИТ НАВСТРЕЧУ РАССВЕТУ',
+  'SANDRO И ZAVOD KILLER УЖЕ ДОСТАЛИ ОХЛАЖДЁННЫЙ КРАФТ ИЗ БАГАЖНИКА',
+  'DED ОТКРЫЛ ФОРТОЧКУ — ЗА ФУРГОНОМ ТЯНЕТСЯ ЛЁГКИЙ ШЛЕЙФ МИРА И ДОБРА',
+  'VANO И KOREN СПОРЯТ, ГДЕ ЛУЧШИЙ СЁРФИНГ: В МАЛИБУ ИЛИ ПОД АЛУПКОЙ',
+  'HOOPER КРУТИТ КАССЕТУ С СИНТИВЕЙВОМ, BO РАЗДАЁТ WI-FI С КРЫШИ',
   'БЕСКОНЕЧНОЕ ЛЕТО · БЕСКОНЕЧНЫЙ РАССВЕТ · GREEN BEER PIZEDES',
 ];
 
@@ -159,9 +159,12 @@ function lerpRgb(
 
 interface OncomingCar {
   z: number; // 1 (horizon) down to 0 (camera)
-  laneOffset: number; // -0.58 oncoming lane
+  laneOffset: number; // -0.52 oncoming lane
   color: string;
   accent: string;
+  hairStyle: 'blonde' | 'brunette' | 'redhead';
+  braColor: 'red' | 'green';
+  wavePhase: number;
 }
 
 interface ExhaustPuff {
@@ -259,7 +262,8 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
 
     const BASE_W = 1280;
     const BASE_H = 720;
-    const scale = Math.max(0.75, Math.min(1.5, renderScale));
+    const safeScale = Number.isFinite(renderScale) ? renderScale : 1;
+    const scale = Math.max(0.75, Math.min(1.5, safeScale));
     canvas.width = Math.round(BASE_W * scale);
     canvas.height = Math.round(BASE_H * scale);
 
@@ -278,14 +282,48 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
       phase: i * 1.4,
     }));
 
+    const hairCycle: Array<OncomingCar['hairStyle']> = ['blonde', 'brunette', 'redhead'];
+    const carColors: Array<{ color: string; accent: string }> = [
+      { color: '#F43F5E', accent: '#FDE047' },
+      { color: '#22D3EE', accent: '#FF40A8' },
+      { color: '#A855F7', accent: '#38BDF8' },
+      { color: '#F59E0B', accent: '#F472B6' },
+    ];
+    let spawnCounter = 3;
+
     const oncomingCars: OncomingCar[] = [
-      { z: 0.78, laneOffset: -0.52, color: '#F43F5E', accent: '#FDE047' },
-      { z: 0.32, laneOffset: -0.52, color: '#22D3EE', accent: '#FF40A8' },
+      {
+        z: 0.86,
+        laneOffset: -0.52,
+        color: '#F43F5E',
+        accent: '#FDE047',
+        hairStyle: 'blonde',
+        braColor: 'green',
+        wavePhase: 0.3,
+      },
+      {
+        z: 0.52,
+        laneOffset: -0.52,
+        color: '#22D3EE',
+        accent: '#FF40A8',
+        hairStyle: 'brunette',
+        braColor: 'red',
+        wavePhase: 2.1,
+      },
+      {
+        z: 0.18,
+        laneOffset: -0.52,
+        color: '#A855F7',
+        accent: '#38BDF8',
+        hairStyle: 'redhead',
+        braColor: 'green',
+        wavePhase: 4.0,
+      },
     ];
 
     const puffs: ExhaustPuff[] = [];
     let rafId = 0;
-    let lastTime = performance.now();
+    let lastTime: number | null = null;
     let elapsed = 0;
     let distance = 0;
     let lastBiomeIdx = 0;
@@ -490,10 +528,10 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
       cx: number,
       cy: number,
       scaleFactor: number,
-      color: string,
-      accent: string
+      car: OncomingCar,
+      t: number
     ) => {
-      const w = 132 * scaleFactor;
+      const w = 138 * scaleFactor;
       const h = 48 * scaleFactor;
       if (w < 8) return;
 
@@ -501,30 +539,179 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
       ctx.fillStyle = 'rgba(0,0,0,0.45)';
       ctx.fillRect(cx - w * 0.56, cy - h * 0.08, w * 1.12, h * 0.18);
 
-      // Low-slung 80s Testarossa / Countach silhouette facing us (oncoming!)
-      ctx.fillStyle = color;
+      // 1. Open-top 80s Convertible Cabin & Waving Girl (drawn before front windshield frame!)
+      if (scaleFactor > 0.12) {
+        const hairPalettes = {
+          blonde: { main: '#FDE047', hi: '#FEF9C3', dark: '#CA8A04', top: '#FF40A8' },
+          brunette: { main: '#3B2314', hi: '#6B4226', dark: '#1C0F08', top: '#22D3EE' },
+          redhead: { main: '#EA580C', hi: '#FB923C', dark: '#9A3412', top: '#A855F7' },
+        };
+        const pal = hairPalettes[car.hairStyle];
+        const girlX = cx + w * 0.13; // Passenger/center-right open seat facing our van!
+        const shoulderY = cy - h * 0.88;
+        const headR = Math.max(2.2, w * 0.095);
+        const headY = shoulderY - headR * 1.35;
+        const wind = Math.sin(t * 13 + car.wavePhase) * headR * 0.35;
+
+        // Interior dark convertible headrest / cabin backing
+        ctx.fillStyle = '#140B24';
+        ctx.fillRect(cx - w * 0.34, cy - h * 0.92, w * 0.68, h * 0.42);
+
+        // Wind-blown back hair volume (blonde / brunette / redhead)
+        ctx.fillStyle = pal.dark;
+        ctx.beginPath();
+        ctx.ellipse(girlX - headR * 0.2 + wind * 0.5, headY + headR * 0.4, headR * 1.45, headR * 1.35, -0.15, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = pal.main;
+        ctx.beginPath();
+        ctx.ellipse(girlX + wind * 0.7, headY + headR * 0.25, headR * 1.35, headR * 1.2, 0.12, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Shoulders & bright summer top
+        ctx.fillStyle = '#F5C2A3';
+        ctx.beginPath();
+        ctx.ellipse(girlX, shoulderY + headR * 0.2, headR * 1.25, headR * 0.75, 0, Math.PI, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = pal.top;
+        ctx.fillRect(girlX - headR * 0.9, shoulderY + headR * 0.15, headR * 1.8, headR * 0.95);
+
+        // Raised waving arm toward our van + fluttering red/green bra in hand!
+        const waveSwing = Math.sin(t * 11 + car.wavePhase);
+        const shoulderArmX = girlX + headR * 0.85;
+        const shoulderArmY = shoulderY + headR * 0.05;
+        const elbowX = shoulderArmX + headR * (0.75 + waveSwing * 0.22);
+        const elbowY = shoulderArmY - headR * 1.05;
+        const handX = elbowX + headR * (0.45 + waveSwing * 0.72);
+        const handY = elbowY - headR * (1.25 - Math.abs(waveSwing) * 0.18);
+
+        ctx.strokeStyle = '#F5C2A3';
+        ctx.lineWidth = Math.max(1.6, headR * 0.44);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(shoulderArmX, shoulderArmY);
+        ctx.lineTo(elbowX, elbowY);
+        ctx.lineTo(handX, handY);
+        ctx.stroke();
+
+        // Second cheering arm raised slightly on left side
+        const leftHandX = girlX - headR * (1.35 - waveSwing * 0.35);
+        const leftHandY = shoulderY - headR * (1.45 + waveSwing * 0.25);
+        ctx.beginPath();
+        ctx.moveTo(girlX - headR * 0.8, shoulderArmY);
+        ctx.lineTo(girlX - headR * 1.15, shoulderArmY - headR * 0.7);
+        ctx.lineTo(leftHandX, leftHandY);
+        ctx.stroke();
+
+        // Face
+        ctx.fillStyle = '#FAD1B6';
+        ctx.beginPath();
+        ctx.arc(girlX, headY, headR * 0.92, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Retro 80s sunglasses
+        ctx.fillStyle = '#0F172A';
+        ctx.fillRect(girlX - headR * 0.68, headY - headR * 0.25, headR * 0.58, headR * 0.34);
+        ctx.fillRect(girlX + headR * 0.1, headY - headR * 0.25, headR * 0.58, headR * 0.34);
+        ctx.fillRect(girlX - headR * 0.12, headY - headR * 0.16, headR * 0.24, headR * 0.12);
+        // Bright happy smile
+        ctx.fillStyle = '#F43F5E';
+        ctx.fillRect(girlX - headR * 0.26, headY + headR * 0.32, headR * 0.52, Math.max(1, headR * 0.18));
+
+        // Top bangs / wind-swept hair crown
+        ctx.fillStyle = pal.main;
+        ctx.beginPath();
+        ctx.arc(girlX, headY - headR * 0.32, headR * 0.96, Math.PI * 1.02, Math.PI * 1.98);
+        ctx.fill();
+        ctx.fillStyle = pal.hi;
+        ctx.beginPath();
+        ctx.arc(girlX + headR * 0.18, headY - headR * 0.55, headR * 0.45, Math.PI * 1.1, Math.PI * 1.85);
+        ctx.fill();
+
+        // Bright RED or GREEN BRA twirling/waving in her raised right hand!
+        const braMain = car.braColor === 'red' ? '#FF1E4D' : '#22E538';
+        const braTrim = car.braColor === 'red' ? '#FDA4AF' : '#BBF7D0';
+        const braStrap = car.braColor === 'red' ? '#DC2626' : '#16A34A';
+        const flutter = Math.sin(t * 15 + car.wavePhase) * 0.45;
+        const cupR = Math.max(2.4, headR * 0.62);
+
+        ctx.save();
+        ctx.translate(handX, handY);
+        ctx.rotate(waveSwing * 0.55 + flutter * 0.4);
+
+        // Fluttering bra straps looped around her hand & trailing in the wind
+        ctx.strokeStyle = braStrap;
+        ctx.lineWidth = Math.max(1.2, cupR * 0.26);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.quadraticCurveTo(cupR * 0.8, -cupR * 0.9, cupR * 1.4, -cupR * 0.1);
+        ctx.moveTo(0, 0);
+        ctx.quadraticCurveTo(cupR * 1.3, cupR * 0.95, cupR * 2.5, cupR * 0.35);
+        // Trailing back strap flying in the wind
+        ctx.moveTo(cupR * 2.5, cupR * 0.25);
+        ctx.quadraticCurveTo(cupR * 3.4, -cupR * 0.2 + flutter * cupR, cupR * 3.9, cupR * 0.45);
+        ctx.stroke();
+
+        // Center bridge connecting the two cups
+        ctx.strokeStyle = braMain;
+        ctx.lineWidth = Math.max(1.5, cupR * 0.32);
+        ctx.beginPath();
+        ctx.moveTo(cupR * 0.9, cupR * 0.25);
+        ctx.lineTo(cupR * 2.2, cupR * 0.35);
+        ctx.stroke();
+
+        // Left & right bra cups
+        for (const offset of [
+          { bx: cupR * 0.85, by: cupR * 0.25 },
+          { bx: cupR * 2.15, by: cupR * 0.32 },
+        ]) {
+          ctx.fillStyle = braMain;
+          ctx.beginPath();
+          ctx.arc(offset.bx, offset.by, cupR * 0.72, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = braTrim;
+          ctx.lineWidth = Math.max(0.8, cupR * 0.16);
+          ctx.beginPath();
+          ctx.arc(offset.bx, offset.by - cupR * 0.08, cupR * 0.56, Math.PI * 1.1, Math.PI * 1.9);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // 2. Low-slung 80s Convertible Body & Chrome Windshield Frame facing us
+      ctx.fillStyle = car.color;
       ctx.beginPath();
       ctx.moveTo(cx - w * 0.52, cy);
-      ctx.lineTo(cx - w * 0.48, cy - h * 0.52);
-      ctx.lineTo(cx - w * 0.3, cy - h * 0.96);
-      ctx.lineTo(cx + w * 0.3, cy - h * 0.96);
-      ctx.lineTo(cx + w * 0.48, cy - h * 0.52);
+      ctx.lineTo(cx - w * 0.48, cy - h * 0.54);
+      ctx.lineTo(cx - w * 0.38, cy - h * 0.64);
+      ctx.lineTo(cx + w * 0.38, cy - h * 0.64);
+      ctx.lineTo(cx + w * 0.48, cy - h * 0.54);
       ctx.lineTo(cx + w * 0.52, cy);
       ctx.closePath();
       ctx.fill();
 
-      // Windshield reflecting sunrise
-      const wg = ctx.createLinearGradient(cx, cy - h * 0.92, cx, cy - h * 0.52);
-      wg.addColorStop(0, '#FF9E57');
-      wg.addColorStop(1, '#31144C');
+      // Low tinted convertible windshield (translucent so girl remains clearly visible above & behind!)
+      const wg = ctx.createLinearGradient(cx, cy - h * 0.9, cx, cy - h * 0.56);
+      wg.addColorStop(0, 'rgba(255, 158, 87, 0.55)');
+      wg.addColorStop(1, 'rgba(49, 20, 76, 0.72)');
       ctx.fillStyle = wg;
       ctx.beginPath();
-      ctx.moveTo(cx - w * 0.27, cy - h * 0.88);
-      ctx.lineTo(cx + w * 0.27, cy - h * 0.88);
-      ctx.lineTo(cx + w * 0.38, cy - h * 0.54);
-      ctx.lineTo(cx - w * 0.38, cy - h * 0.54);
+      ctx.moveTo(cx - w * 0.32, cy - h * 0.86);
+      ctx.lineTo(cx + w * 0.32, cy - h * 0.86);
+      ctx.lineTo(cx + w * 0.4, cy - h * 0.56);
+      ctx.lineTo(cx - w * 0.4, cy - h * 0.56);
       ctx.closePath();
       ctx.fill();
+
+      // Sleek chrome windshield frame
+      ctx.strokeStyle = '#E2E8F0';
+      ctx.lineWidth = Math.max(1.2, w * 0.02);
+      ctx.beginPath();
+      ctx.moveTo(cx - w * 0.4, cy - h * 0.56);
+      ctx.lineTo(cx - w * 0.32, cy - h * 0.86);
+      ctx.lineTo(cx + w * 0.32, cy - h * 0.86);
+      ctx.lineTo(cx + w * 0.4, cy - h * 0.56);
+      ctx.stroke();
 
       // Front bumper grille
       ctx.fillStyle = '#0F0A1C';
@@ -537,7 +724,7 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
         const hy = cy - h * 0.42;
         const grd = ctx.createRadialGradient(hx, hy, 1, hx, hy, hlGlow);
         grd.addColorStop(0, '#FFFFFF');
-        grd.addColorStop(0.35, accent);
+        grd.addColorStop(0.35, car.accent);
         grd.addColorStop(1, 'rgba(255,255,255,0)');
         ctx.fillStyle = grd;
         ctx.beginPath();
@@ -554,9 +741,9 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
       t: number,
       hornGlow: number
     ) => {
-      // Beat-synced 108 BPM gentle cruise suspension bounce
+      // Beat-synced 108 BPM gentle cruise suspension bounce (subtle & smooth)
       const beatPhase = (t * (108 / 60)) * Math.PI * 2;
-      const bounceY = Math.sin(beatPhase) * 2.4 + Math.sin(t * 14) * 0.7;
+      const bounceY = Math.sin(beatPhase) * 1.2 + Math.sin(t * 14) * 0.35;
       const bodyY = baseY + bounceY;
 
       ctx.save();
@@ -825,22 +1012,23 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
     };
 
     const render = (now: number) => {
-      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      const dt =
+        lastTime === null ? 0.016 : Math.max(0, Math.min(0.05, (now - lastTime) / 1000));
       lastTime = now;
-      elapsed += dt;
-      distance += dt * 9.5;
+      elapsed = Math.max(0, elapsed + dt);
+      distance = Math.max(0, distance + dt * 9.5);
       if (hornFlashRef.current > 0) {
         hornFlashRef.current = Math.max(0, hornFlashRef.current - dt);
       }
 
       // Determine current biome & smooth blend factor to next biome
       const cyclePos = elapsed / BIOME_DURATION;
-      const biomeIdx = Math.floor(cyclePos) % BIOMES.length;
+      const biomeIdx = ((Math.floor(cyclePos) % BIOMES.length) + BIOMES.length) % BIOMES.length;
       const nextBiomeIdx = (biomeIdx + 1) % BIOMES.length;
       const timeInBiome = (cyclePos - Math.floor(cyclePos)) * BIOME_DURATION;
       const blend =
         timeInBiome > BIOME_DURATION - TRANSITION_DUR
-          ? (timeInBiome - (BIOME_DURATION - TRANSITION_DUR)) / TRANSITION_DUR
+          ? Math.max(0, Math.min(1, (timeInBiome - (BIOME_DURATION - TRANSITION_DUR)) / TRANSITION_DUR))
           : 0;
 
       if (biomeIdx !== lastBiomeIdx) {
@@ -868,9 +1056,10 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
       vanOffsetRef.current = Math.max(-0.56, Math.min(0.58, vanOffsetRef.current));
 
       ctx.save();
-      ctx.scale(scale, scale);
+      try {
+        ctx.scale(scale, scale);
 
-      const horizonY = 312;
+        const horizonY = 312;
 
       // =========================================================
       // 1. SYNTHWAVE MALIBU / VICE CITY SUNRISE SKY
@@ -1190,17 +1379,21 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
       // =========================================================
       const PROP_SLOTS = 24;
       const sway = Math.sin(elapsed * 1.7);
+      const propScroll = distance * 0.42;
+      const propPhase = propScroll % 1;
+      const propBaseIdx = Math.floor(propScroll);
 
-      // Iterate back-to-front so closer palms/hotels overlap distant ones cleanly
-      for (let slot = PROP_SLOTS - 1; slot >= 0; slot--) {
-        const frac = (slot + (1 - ((distance * 0.42) % 1))) / PROP_SLOTS;
+      // Iterate back-to-front (horizon slot 0 -> foreground slot N-1) so props rush backward past the van
+      for (let slot = 0; slot < PROP_SLOTS; slot++) {
+        const frac = (slot + propPhase) / PROP_SLOTS;
         if (frac <= 0.03 || frac >= 1.02) continue;
 
-        // Exponential depth mapping: lots of props near horizon, smooth acceleration past camera
+        // Exponential depth mapping: dense near horizon, accelerating smoothly backward past camera
         const depthNorm = Math.pow(frac, 1.35);
         const s = projectSlice(depthNorm);
         const pScale = s.persp;
-        const propIdx = Math.floor(distance * 0.42) + (PROP_SLOTS - slot);
+        // Stable prop identity across wrap: (N - slot) + baseIdx stays identical when slot & baseIdx both +1
+        const propIdx = (PROP_SLOTS - slot) + propBaseIdx;
 
         const leftEdge = s.centerX - s.halfW * 1.15;
         const rightEdge = s.centerX + s.halfW * 1.15;
@@ -1343,24 +1536,35 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
       }
 
       // =========================================================
-      // 7. ONCOMING 80s RETRO SPORTS CARS IN LEFT LANE
+      // 7. ONCOMING 80s RETRO CONVERTIBLES WITH WAVING FANS!
       // =========================================================
       for (const car of oncomingCars) {
-        car.z -= dt * 0.28;
+        car.z -= dt * 0.24;
         if (car.z <= 0.02) {
           car.z = 1.0;
+          const nextPaint = carColors[spawnCounter % carColors.length];
+          car.color = nextPaint.color;
+          car.accent = nextPaint.accent;
+          car.hairStyle = hairCycle[spawnCounter % hairCycle.length];
+          car.braColor = spawnCounter % 2 === 0 ? 'red' : 'green';
+          car.wavePhase = spawnCounter * 1.7;
+          spawnCounter += 1;
         }
+      }
+      // Draw farthest oncoming car first, closest last
+      const sortedCars = [...oncomingCars].sort((a, b) => b.z - a.z);
+      for (const car of sortedCars) {
         const depthNorm = 1 - car.z;
         const s = projectSlice(depthNorm);
         const carX = s.centerX + s.halfW * car.laneOffset;
-        drawRetroSportsCar(carX, s.y, s.persp * 1.15, car.color, car.accent);
+        drawRetroSportsCar(carX, s.y, s.persp * 1.18, car, elapsed);
       }
 
       // =========================================================
       // 8. EXHAUST PUFFS & DED's GREEN WINDOW SMOKE
       // =========================================================
       const vanX = BASE_W * 0.5 + vanOffsetRef.current * 240;
-      const vanBaseY = BASE_H - 36;
+      const vanBaseY = BASE_H - 54;
 
       puffTimer += dt;
       if (puffTimer > 0.14) {
@@ -1429,8 +1633,11 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
       vig.addColorStop(1, 'rgba(12, 4, 24, 0.34)');
       ctx.fillStyle = vig;
       ctx.fillRect(0, 0, BASE_W, BASE_H);
-
-      ctx.restore();
+      } catch (err) {
+        console.error('EndlessFinaleView render error:', err);
+      } finally {
+        ctx.restore();
+      }
       rafId = requestAnimationFrame(render);
     };
 

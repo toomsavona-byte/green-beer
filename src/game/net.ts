@@ -121,14 +121,34 @@ class OnlineClient {
   private reconnectTimer: number | null = null;
   private shouldStayConnected = false;
 
+  private resolveWsUrl(): string {
+    const raw = (import.meta.env.VITE_SERVER_URL as string | undefined)?.trim();
+    if (raw) {
+      const cleaned = raw.replace(/\/+$/, '');
+      if (cleaned.startsWith('ws://') || cleaned.startsWith('wss://')) {
+        return cleaned.endsWith('/ws') ? cleaned : `${cleaned}/ws`;
+      }
+      if (cleaned.startsWith('https://')) {
+        const hostPath = cleaned.slice('https://'.length);
+        return hostPath.endsWith('/ws') ? `wss://${hostPath}` : `wss://${hostPath}/ws`;
+      }
+      if (cleaned.startsWith('http://')) {
+        const hostPath = cleaned.slice('http://'.length);
+        return hostPath.endsWith('/ws') ? `ws://${hostPath}` : `ws://${hostPath}/ws`;
+      }
+      return `wss://${cleaned}/ws`;
+    }
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}/ws`;
+  }
+
   public connect(): void {
     this.shouldStayConnected = true;
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${proto}//${window.location.host}/ws`;
+    const url = this.resolveWsUrl();
 
     try {
       const ws = new WebSocket(url);

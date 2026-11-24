@@ -1587,12 +1587,12 @@ export class GameEngine {
       biker: { hp: 64, speed: 95, score: 300 },
       beer_truck: { hp: 145, speed: 62, score: 480 },
       elite: { hp: 108, speed: 84, score: 420 },
-      boss_drunk: { hp: 520, speed: 56, score: 2500, phases: 2 },
-      boss_buffalo: { hp: 640, speed: 54, score: 3200, phases: 2 },
-      boss_chief: { hp: 760, speed: 62, score: 4000, shielded: true, phases: 3 },
-      boss_caravan: { hp: 900, speed: 74, score: 5000, phases: 3 },
-      boss_elevator: { hp: 960, speed: 68, score: 5800, phases: 3 },
-      boss_director: { hp: 1120, speed: 76, score: 7500, phases: 3 },
+      boss_drunk: { hp: 700, speed: 65, score: 2800, phases: 2 },
+      boss_buffalo: { hp: 860, speed: 63, score: 3600, phases: 2 },
+      boss_chief: { hp: 1040, speed: 72, score: 4500, shielded: true, phases: 3 },
+      boss_caravan: { hp: 1220, speed: 84, score: 5600, phases: 3 },
+      boss_elevator: { hp: 1320, speed: 78, score: 6500, phases: 3 },
+      boss_director: { hp: 1680, speed: 90, score: 9000, phases: 3 },
     };
 
     const cfg = presets[kind];
@@ -1894,34 +1894,38 @@ export class GameEngine {
       e.attackCd = 1.35 * cdMult;
     } else if (e.kind === 'boss_drunk') {
       const r = Math.random();
-      e.pendingAttack = r < 0.4 ? 'vomit' : r < 0.78 ? 'charge' : 'melee';
-      e.telegraphTimer = 0.52 * phaseAccel * tgMult;
-      e.attackCd = 1.65 * phaseAccel * cdMult;
+      e.pendingAttack = r < 0.42 ? 'vomit' : r < 0.82 ? 'charge' : 'melee';
+      e.telegraphTimer = 0.44 * phaseAccel * tgMult;
+      e.attackCd = 1.38 * phaseAccel * cdMult;
     } else if (e.kind === 'boss_buffalo') {
       const r = Math.random();
-      e.pendingAttack = r < 0.45 ? 'crate' : r < 0.75 ? 'charge' : 'summon';
-      e.telegraphTimer = 0.55 * phaseAccel * tgMult;
-      e.attackCd = 1.85 * phaseAccel * cdMult;
+      e.pendingAttack = r < 0.46 ? 'crate' : r < 0.78 ? 'charge' : 'summon';
+      e.telegraphTimer = 0.46 * phaseAccel * tgMult;
+      e.attackCd = 1.52 * phaseAccel * cdMult;
     } else if (e.kind === 'boss_chief') {
       const r = Math.random();
-      e.pendingAttack = r < 0.5 ? 'barrage' : r < 0.8 ? 'charge' : 'summon';
-      e.telegraphTimer = 0.48 * phaseAccel * tgMult;
-      e.attackCd = 1.55 * phaseAccel * cdMult;
+      e.pendingAttack = r < 0.52 ? 'barrage' : r < 0.82 ? 'charge' : 'summon';
+      e.telegraphTimer = 0.42 * phaseAccel * tgMult;
+      e.attackCd = 1.32 * phaseAccel * cdMult;
     } else if (e.kind === 'boss_caravan') {
       const r = Math.random();
       e.pendingAttack = r < 0.48 ? 'barrage' : r < 0.82 ? 'crate' : 'summon';
-      e.telegraphTimer = 0.5 * phaseAccel * tgMult;
-      e.attackCd = 1.55 * phaseAccel * cdMult;
+      e.telegraphTimer = 0.43 * phaseAccel * tgMult;
+      e.attackCd = 1.32 * phaseAccel * cdMult;
     } else if (e.kind === 'boss_elevator') {
       const r = Math.random();
-      e.pendingAttack = r < 0.34 ? 'charge' : r < 0.7 ? 'barrage' : 'summon';
-      e.telegraphTimer = 0.48 * phaseAccel * tgMult;
-      e.attackCd = 1.5 * phaseAccel * cdMult;
+      e.pendingAttack = r < 0.36 ? 'charge' : r < 0.72 ? 'barrage' : 'summon';
+      e.telegraphTimer = 0.42 * phaseAccel * tgMult;
+      e.attackCd = 1.28 * phaseAccel * cdMult;
     } else if (e.kind === 'boss_director') {
       const r = Math.random();
-      e.pendingAttack = r < 0.36 ? 'beam' : r < 0.72 ? 'barrage' : 'summon';
-      e.telegraphTimer = 0.52 * phaseAccel * tgMult;
-      e.attackCd = 1.45 * phaseAccel * cdMult;
+      if (e.phase >= 2 && r > 0.84) {
+        e.pendingAttack = 'charge';
+      } else {
+        e.pendingAttack = r < 0.36 ? 'beam' : r < 0.72 ? 'barrage' : 'summon';
+      }
+      e.telegraphTimer = 0.41 * phaseAccel * tgMult;
+      e.attackCd = 1.15 * phaseAccel * cdMult;
     }
   }
 
@@ -1945,45 +1949,55 @@ export class GameEngine {
       case 'charge': {
         // Smooth high-speed dash/lunge!
         const isPunk = e.kind === 'acid_punk';
-        e.dashTimer = isPunk ? 0.22 : 0.34;
-        const speedMult = isPunk ? 215 : 260;
-        e.dashVx = Math.cos(ang) * speedMult * (0.9 + projSpeed * 0.12);
-        e.dashVy = Math.sin(ang) * (isPunk ? 95 : 110) * (0.9 + projSpeed * 0.12);
-        if (!isPunk) this.triggerShake(3.5, 0.18);
+        const isDirector = e.kind === 'boss_director';
+        e.dashTimer = isPunk ? 0.22 : isDirector ? 0.38 : 0.36;
+        const speedMult = isPunk ? 215 : isDirector ? 305 : 280;
+        e.dashVx = Math.cos(ang) * speedMult * (0.92 + projSpeed * 0.14);
+        e.dashVy = Math.sin(ang) * (isPunk ? 95 : 122) * (0.92 + projSpeed * 0.14);
+        if (!isPunk) this.triggerShake(3.8, 0.2);
         soundEngine.playMelee(!isPunk);
         this.queueSfx('melee', !isPunk);
         break;
       }
       case 'vomit': {
-        this.zones.push({
-          kind: 'vomit',
-          x: Math.max(this.camX + 24, Math.min(this.camX + VIRTUAL_W - 24, e.x + e.facing * 42)),
-          y: e.y,
-          radius: e.isBoss ? 40 : 24,
-          timer: 4.0,
-          maxTimer: 4.0,
-          tickCd: 0.15,
-          fromPlayer: false,
-        });
-        this.spawnParticles(e.x + e.facing * 26, e.y, 16, '#39FF14', 14, 75);
+        const puddleCount = e.isBoss && e.phase >= 2 ? 2 : 1;
+        for (let pIdx = 0; pIdx < puddleCount; pIdx++) {
+          const offsetX = pIdx === 0 ? e.facing * 44 : e.facing * 92;
+          const offsetY = pIdx === 0 ? 0 : (target.y >= e.y ? 20 : -20);
+          this.zones.push({
+            kind: 'vomit',
+            x: Math.max(this.camX + 24, Math.min(this.camX + VIRTUAL_W - 24, e.x + offsetX)),
+            y: Math.max(FLOOR_MIN_Y + 12, Math.min(FLOOR_MAX_Y - 8, e.y + offsetY)),
+            radius: e.isBoss ? 44 : 24,
+            timer: 4.5,
+            maxTimer: 4.5,
+            tickCd: 0.14,
+            fromPlayer: false,
+          });
+        }
+        this.spawnParticles(e.x + e.facing * 26, e.y, 16, '#39FF14', 16, 85);
         break;
       }
       case 'crate': {
-        const count = e.isBoss && e.phase >= 2 ? 2 + (diff.extraBossShots >= 2 ? 1 : 0) : 1;
+        const count = e.isBoss
+          ? e.phase >= 2
+            ? 3 + (diff.extraBossShots >= 2 ? 1 : 0)
+            : 2
+          : 1;
         for (let c = 0; c < count; c++) {
-          const spread = (c - (count - 1) / 2) * 0.25;
+          const spread = (c - (count - 1) / 2) * 0.24;
           this.projectiles.push({
             x: e.x + e.facing * 18,
             y: e.y,
             z: 22,
-            vx: Math.cos(ang + spread) * 215 * projSpeed,
-            vy: Math.sin(ang + spread) * 145 * projSpeed,
+            vx: Math.cos(ang + spread) * (e.isBoss ? 235 : 215) * projSpeed,
+            vy: Math.sin(ang + spread) * (e.isBoss ? 160 : 145) * projSpeed,
             damage: e.isBoss ? 2 : 1,
-            distLeft: 430,
+            distLeft: 450,
             fromPlayer: false,
             pierce: false,
             hitIds: new Set(),
-            explosiveRadius: 28,
+            explosiveRadius: 30,
             burnDuration: 0,
             stunDuration: 0,
             hacksTech: false,
@@ -2024,17 +2038,25 @@ export class GameEngine {
         break;
       }
       case 'barrage': {
-        const shots = e.isBoss ? 3 + e.phase + diff.extraBossShots : 3 + (diff.extraBossShots >= 2 ? 1 : 0);
+        const isDirector = e.kind === 'boss_director';
+        const shots = isDirector
+          ? 5 + e.phase + diff.extraBossShots
+          : e.isBoss
+            ? 4 + e.phase + diff.extraBossShots
+            : 3 + (diff.extraBossShots >= 2 ? 1 : 0);
+        const fanArc = isDirector ? 0.92 : 0.76;
+        const speedX = isDirector ? 268 : e.isBoss ? 252 : 240;
+        const speedY = isDirector ? 195 : e.isBoss ? 185 : 175;
         for (let s = 0; s < shots; s++) {
-          const offset = ((s / (shots - 1)) - 0.5) * 0.7;
+          const offset = ((s / (shots - 1)) - 0.5) * fanArc;
           this.projectiles.push({
             x: e.x + e.facing * 16,
             y: e.y,
             z: 24,
-            vx: Math.cos(ang + offset) * 240 * projSpeed,
-            vy: Math.sin(ang + offset) * 175 * projSpeed,
+            vx: Math.cos(ang + offset) * speedX * projSpeed,
+            vy: Math.sin(ang + offset) * speedY * projSpeed,
             damage: 1,
-            distLeft: 440,
+            distLeft: 460,
             fromPlayer: false,
             pierce: false,
             hitIds: new Set(),
@@ -2043,9 +2065,9 @@ export class GameEngine {
             stunDuration: 0,
             hacksTech: false,
             smokeCloud: false,
-            color: e.kind === 'boss_director' ? '#39FF14' : e.kind === 'boss_elevator' ? '#FACC15' : '#FF2A85',
+            color: isDirector ? '#39FF14' : e.kind === 'boss_elevator' ? '#FACC15' : '#FF2A85',
             glowColor: '#FEF08A',
-            radius: 4.5,
+            radius: isDirector ? 5 : 4.5,
           });
         }
         soundEngine.playWeaponSfx('firewall', false);
@@ -2053,40 +2075,64 @@ export class GameEngine {
         break;
       }
       case 'beam': {
-        this.zones.push({
-          kind: 'virus_beam',
-          x: target.x,
-          y: target.y,
-          radius: 42,
-          timer: 1.6,
-          maxTimer: 1.6,
-          tickCd: 0.22 * Math.max(0.65, diff.fireCooldownMult),
-          fromPlayer: false,
-        });
-        this.triggerShake(4, 0.25);
+        // Director scales beam pressure across phases: 1 beam (P1) -> 2 beams (P2) -> 3 triangulated beams (P3)!
+        const beamCount = e.kind === 'boss_director' ? Math.min(3, e.phase) : 1;
+        const offsets =
+          beamCount === 1
+            ? [[0, 0]]
+            : beamCount === 2
+              ? [
+                  [0, 0],
+                  [target.facing * 54, target.y > (FLOOR_MIN_Y + FLOOR_MAX_Y) * 0.5 ? -26 : 26],
+                ]
+              : [
+                  [0, 0],
+                  [-62, -24],
+                  [62, 24],
+                ];
+        for (const [ox, oy] of offsets) {
+          this.zones.push({
+            kind: 'virus_beam',
+            x: Math.max(this.camX + 34, Math.min(this.camX + VIRTUAL_W - 34, target.x + ox)),
+            y: Math.max(FLOOR_MIN_Y + 14, Math.min(FLOOR_MAX_Y - 10, target.y + oy)),
+            radius: e.kind === 'boss_director' ? 46 : 42,
+            timer: 1.75,
+            maxTimer: 1.75,
+            tickCd: 0.19 * Math.max(0.62, diff.fireCooldownMult),
+            fromPlayer: false,
+          });
+        }
+        this.triggerShake(5, 0.28);
         soundEngine.playWeaponSfx('bass_beam', false);
         this.queueSfx('weapon', 'bass_beam', false, 0);
         break;
       }
       case 'summon': {
-        if (this.enemies.filter((x) => !x.dead).length < diff.bossSummonCap) {
+        const effectiveCap = e.kind === 'boss_director' ? diff.bossSummonCap + 1 : diff.bossSummonCap;
+        if (this.enemies.filter((x) => !x.dead).length < effectiveCap) {
           const dropTop = this.level.mode === 'elevator';
           const minionKind: EnemyKind =
             e.kind === 'boss_buffalo'
-              ? 'drunk'
-              : e.kind === 'boss_caravan'
-                ? 'biker'
-                : e.kind === 'boss_elevator'
-                  ? (Math.random() < 0.65 ? 'acid_punk' : 'drone')
-                  : 'drone';
+              ? 'acid_punk'
+              : e.kind === 'boss_chief'
+                ? 'guard_gunner'
+                : e.kind === 'boss_caravan'
+                  ? 'biker'
+                  : e.kind === 'boss_elevator'
+                    ? (Math.random() < 0.65 ? 'acid_punk' : 'drone')
+                    : e.kind === 'boss_director' && e.phase >= 2
+                      ? 'elite'
+                      : 'drone';
           const sx = dropTop ? 70 + Math.random() * (VIRTUAL_W - 140) : this.camX + VIRTUAL_W - 24;
           this.spawnEnemy(minionKind, sx, 172 + Math.random() * 68, dropTop);
-          if (
-            (this.difficulty === 'hard' || this.players.length === 2) &&
-            this.enemies.filter((x) => !x.dead).length < diff.bossSummonCap
-          ) {
+          const shouldSpawnPair =
+            this.difficulty === 'hard' ||
+            this.players.length === 2 ||
+            (e.kind === 'boss_director' && e.phase >= 2);
+          if (shouldSpawnPair && this.enemies.filter((x) => !x.dead).length < effectiveCap) {
+            const secondKind: EnemyKind = e.kind === 'boss_director' ? 'drone' : minionKind;
             const sx2 = dropTop ? 70 + Math.random() * (VIRTUAL_W - 140) : this.camX + 24;
-            this.spawnEnemy(minionKind, sx2, 175 + Math.random() * 62, dropTop);
+            this.spawnEnemy(secondKind, sx2, 175 + Math.random() * 62, dropTop);
           }
           this.addFloatingText(e.x, e.y - 62, dropTop ? 'ДЕСАНТ СВЕРХУ!' : 'ПОДМОГА!', '#FF2A85');
         }

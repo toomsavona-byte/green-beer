@@ -3,6 +3,7 @@ import { Volume2, VolumeX } from 'lucide-react';
 import { DIFFICULTIES, LEVELS, TITLE_ART_URL } from '../game/data';
 import { soundEngine } from '../game/audio';
 import { DifficultyId, GameSettings, LevelId, TouchControlsMode } from '../game/types';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface TitleScreenProps {
   settings: GameSettings;
@@ -13,6 +14,7 @@ interface TitleScreenProps {
   onUpdateSettings: (partial: Partial<GameSettings>) => void;
   onStart: () => void;
   onOpenOnlineLobby: () => void;
+  onPreviewFinale: () => void;
 }
 
 const TOUCH_MODE_LABELS: Record<TouchControlsMode, string> = {
@@ -30,6 +32,7 @@ export function TitleScreen({
   onUpdateSettings,
   onStart,
   onOpenOnlineLobby,
+  onPreviewFinale,
 }: TitleScreenProps) {
   const [imgFailed, setImgFailed] = useState(false);
 
@@ -108,15 +111,18 @@ export function TitleScreen({
           <span className="hidden md:inline">3 ЖИЗНИ × 3 HP · 3 КОНТИНЬЮ</span>
         </div>
 
-        <button
-          type="button"
-          onClick={toggleMute}
-          aria-label={settings.muted ? 'Включить звук' : 'Выключить звук'}
-          className="flex items-center gap-2 px-3 min-h-[40px] sm:min-h-0 sm:py-1.5 bg-[#141A24]/90 border border-[#2B3648] text-xs font-mono-num text-[#E6EDF3] hover:border-[#39FF14] transition-colors cursor-pointer whitespace-nowrap shrink-0"
-        >
-          {settings.muted ? <VolumeX className="w-4 h-4 text-[#FF2A85]" /> : <Volume2 className="w-4 h-4 text-[#39FF14]" />}
-          <span className="hidden sm:inline">{settings.muted ? 'ЗВУК ВЫКЛ' : 'ЗВУК ВКЛ'}</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <PWAInstallButton />
+          <button
+            type="button"
+            onClick={toggleMute}
+            aria-label={settings.muted ? 'Включить звук' : 'Выключить звук'}
+            className="flex items-center gap-2 px-3 min-h-[40px] sm:min-h-0 sm:py-1.5 bg-[#141A24]/90 border border-[#2B3648] text-xs font-mono-num text-[#E6EDF3] hover:border-[#39FF14] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+          >
+            {settings.muted ? <VolumeX className="w-4 h-4 text-[#FF2A85]" /> : <Volume2 className="w-4 h-4 text-[#39FF14]" />}
+            <span className="hidden sm:inline">{settings.muted ? 'ЗВУК ВЫКЛ' : 'ЗВУК ВКЛ'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Upper Negative Space: Bespoke SVG Logo Lockup */}
@@ -342,6 +348,17 @@ export function TitleScreen({
                 {lvl.shortName}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.unlock();
+                soundEngine.playMenuConfirm();
+                onPreviewFinale();
+              }}
+              className="px-2.5 min-h-[34px] sm:min-h-0 sm:py-1 text-[11px] sm:text-xs font-mono-num font-bold border border-[#FF40A8] bg-[#2D1028] text-[#FEF08A] hover:bg-[#FF40A8] hover:text-white transition-colors cursor-pointer whitespace-nowrap shrink-0"
+            >
+              ★ ФИНАЛ
+            </button>
           </div>
         </div>
 
