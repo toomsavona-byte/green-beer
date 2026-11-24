@@ -149,7 +149,7 @@ function allowScoreSubmit(clientIp: string): boolean {
 interface RoomState {
   code: string;
   phase: 'LOBBY' | 'CUTSCENE' | 'PLAYING' | 'STAGE_CLEAR' | 'GAME_OVER' | 'VICTORY';
-  levelId: 1 | 2 | 3 | 4 | 5 | 6;
+  levelId: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   difficulty: 'easy' | 'normal' | 'hard';
   friendlyFire: boolean;
   hostHero: string;
@@ -292,8 +292,8 @@ function leaveCurrentRoom(ws: WebSocket): void {
   broadcastLobbyDirectory();
 }
 
-function isValidLevelId(n: unknown): n is 1 | 2 | 3 | 4 | 5 | 6 {
-  return typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= 6;
+function isValidLevelId(n: unknown): n is 1 | 2 | 3 | 4 | 5 | 6 | 7 {
+  return typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= 7;
 }
 
 async function startServer() {
@@ -389,9 +389,15 @@ async function startServer() {
     server: httpServer,
     path: '/ws',
     maxPayload: 64 * 1024,
+    perMessageDeflate: false,
   });
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
+    try {
+      req.socket.setNoDelay(true);
+    } catch {
+      // Ignore if socket does not expose setNoDelay
+    }
     clients.set(ws, { roomCode: null, slot: null, alive: true });
     safeSend(ws, { type: 'room:list', rooms: getOpenRoomsList() });
 
@@ -401,17 +407,37 @@ async function startServer() {
     });
 
     ws.on('message', (raw) => {
+      const meta = clients.get(ws);
+      if (!meta) return;
+
+      const rawText = raw.toString('utf8');
+
+      // Fast-path zero-copy relay for high-frequency host game:frame packets!
+      // Avoids server-side JSON.parse + JSON.stringify overhead AND drops stale frames if guest socket backs up.
+      if (rawText.startsWith('{"type":"game:frame"')) {
+        if (!meta.roomCode || meta.slot !== 1) return;
+        const room = rooms.get(meta.roomCode);
+        if (!room || !room.guestWs || room.guestWs.readyState !== WebSocket.OPEN) return;
+        room.lastActivity = Date.now();
+        // Backpressure protection: if guest outbound buffer already holds > 16 KB, drop intermediate visual frame
+        // so the guest never builds up a multi-second lag queue!
+        if (room.guestWs.bufferedAmount > 16384) return;
+        try {
+          room.guestWs.send(rawText);
+        } catch {
+          // Ignore transient send errors
+        }
+        return;
+      }
+
       let msg: Record<string, unknown>;
       try {
-        const parsed = JSON.parse(raw.toString('utf8'));
+        const parsed = JSON.parse(rawText);
         if (!parsed || typeof parsed !== 'object' || typeof parsed.type !== 'string') return;
         msg = parsed as Record<string, unknown>;
       } catch {
         return;
       }
-
-      const meta = clients.get(ws);
-      if (!meta) return;
 
       switch (msg.type) {
         case 'ping': {
@@ -590,10 +616,12 @@ async function startServer() {
           // Guest sends validated P2 input -> server stamps slot: 2 and relays to Host
           if (!meta.roomCode || meta.slot !== 2) return;
           const room = rooms.get(meta.roomCode);
-          if (!room || !room.hostWs) return;
+          if (!room || !room.hostWs || room.hostWs.readyState !== WebSocket.OPEN) return;
           const inp = msg.input as Record<string, unknown> | undefined;
           if (!inp || typeof inp !== 'object') return;
           room.lastActivity = Date.now();
+          const hasAction = Boolean(inp.melee) || Boolean(inp.jump) || Boolean(inp.swap);
+          if (!hasAction && room.hostWs.bufferedAmount > 12288) return;
           safeSend(room.hostWs, {
             type: 'game:input',
             slot: 2,
@@ -614,11 +642,12 @@ async function startServer() {
         }
 
         case 'game:frame': {
-          // Host sends authoritative visual frame snapshot -> server relays to Guest
+          // Fallback relay when frame key ordering differs from fast-path prefix
           if (!meta.roomCode || meta.slot !== 1) return;
           const room = rooms.get(meta.roomCode);
-          if (!room || !room.guestWs) return;
+          if (!room || !room.guestWs || room.guestWs.readyState !== WebSocket.OPEN) return;
           room.lastActivity = Date.now();
+          if (room.guestWs.bufferedAmount > 16384) return;
           safeSend(room.guestWs, {
             type: 'game:frame',
             frame: msg.frame,

@@ -207,7 +207,7 @@ export function CutsceneView({
             <FastForward className="w-3.5 h-3.5 text-[#39FF14]" />
             <span>
               {cutscene.levelId === 'victory'
-                ? 'К ИТОГАМ'
+                ? 'К ФИНАЛУ'
                 : isTouchDevice
                 ? 'В БОЙ'
                 : 'ПРОПУСТИТЬ В БОЙ (ESC)'}
@@ -244,8 +244,8 @@ export function CutsceneView({
               <span>
                 {cutscene.levelId === 'victory'
                   ? isTouchDevice
-                    ? 'НАЖМИТЕ · ПЕРЕЙТИ К ИТОГАМ ->'
-                    : 'ENTER / КЛИК · ПЕРЕЙТИ К ИТОГАМ ->'
+                    ? 'НАЖМИТЕ · К ФИНАЛЬНОЙ ЗАСТАВКЕ ->'
+                    : 'ENTER / КЛИК · К ФИНАЛЬНОЙ ЗАСТАВКЕ ->'
                   : isTouchDevice
                   ? 'НАЖМИТЕ · В БОЙ ->'
                   : 'ENTER / КЛИК · В БОЙ ->'}

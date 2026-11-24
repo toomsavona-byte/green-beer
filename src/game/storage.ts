@@ -16,7 +16,7 @@ function detectInitialTouchDevice(): boolean {
 }
 
 const DEFAULT_SAVE: SaveData = {
-  unlockedLevel: 6, // All 6 levels selectable per user preference, tracks progress & high score
+  unlockedLevel: 7, // All 7 levels tracked (Stage 7 Finale stays hidden in manual stage select)
   highScore: 0,
   difficulty: 'normal',
   friendlyFire: false,
@@ -54,9 +54,9 @@ export function loadSaveData(): SaveData {
             gamepad: normalizeControlBindings({ gamepad: DEFAULT_GAMEPAD }).gamepad,
           };
     const loaded: SaveData = {
-      unlockedLevel: (parsed.unlockedLevel && parsed.unlockedLevel >= 1 && parsed.unlockedLevel <= 6
+      unlockedLevel: (parsed.unlockedLevel && parsed.unlockedLevel >= 1 && parsed.unlockedLevel <= 7
         ? parsed.unlockedLevel
-        : 6) as LevelId,
+        : 7) as LevelId,
       highScore: typeof parsed.highScore === 'number' && parsed.highScore >= 0 ? parsed.highScore : 0,
       difficulty: validDifficulty,
       friendlyFire: Boolean(parsed.friendlyFire),

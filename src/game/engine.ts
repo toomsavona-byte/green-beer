@@ -33,6 +33,10 @@ import {
   WeaponId,
 } from './types';
 
+const FLIGHT_MIN_Y = 56;
+const FLIGHT_MAX_Y = 224;
+const FLIGHT_ROOF_Y = 232;
+
 interface SimPlayer {
   slot: 1 | 2;
   heroId: HeroId;
@@ -53,6 +57,7 @@ interface SimPlayer {
   secondaryWeaponId: WeaponId | null;
   shootCd: number;
   meleeCd: number;
+  boostCd: number;
   meleeTimer: number;
   shootTimer: number;
   hurtTimer: number;
@@ -97,6 +102,7 @@ interface SimEnemy {
   scoreValue: number;
   shielded: boolean;
   dropping: boolean;
+  bouncePause: number;
 }
 
 interface SimProjectile {
@@ -180,7 +186,8 @@ export interface EngineCallbacks {
   onAllPlayersDead: (continuesLeft: number, score: number) => void;
   onPauseToggle: () => void;
   onNetFrame?: (frame: NetFramePayload) => void;
-  onLocalGuestInput?: (input: RemoteInputState) => void;
+  canSendNetFrame?: () => boolean;
+  onLocalGuestInput?: (input: RemoteInputState, urgent?: boolean) => void;
 }
 
 export interface EngineStartParams {
@@ -305,9 +312,19 @@ export class GameEngine {
   };
   private remoteP2Latched = { melee: false, jump: false, swap: false };
   private netFrameTimer = 0;
+  private netFrameSeq = 0;
+  private lastNetHudSig = '';
+  private lastNetHudTime = -10;
+  private lastSentMusicTrack: string | null = null;
   private guestInputTimer = 0;
   private lastGuestInputKey = '';
   private remoteFrame: NetFramePayload | null = null;
+  private prevRemoteFrame: NetFramePayload | null = null;
+  private remoteFrameAt = 0;
+  private remoteFrameInterval = 48;
+  private lastAppliedNetSeq = 0;
+  private pendingRemoteHud: HudSnapshot | null = null;
+  private pendingRemoteSfx: Array<{ type: string; a?: string | number | boolean; b?: boolean; c?: number }> = [];
   private sfxQueue: Array<{ type: string; a?: string | number | boolean; b?: boolean; c?: number }> = [];
   private currentMusicTrack: MusicTrack = 'level1';
   private lastGuestMusicTrack: string | null = null;
@@ -462,7 +479,26 @@ export class GameEngine {
   }
 
   public applyRemoteFrame(frame: NetFramePayload): void {
+    if (frame.seq !== undefined && frame.seq > 0) {
+      if (frame.seq <= this.lastAppliedNetSeq && this.remoteFrame?.levelId === frame.levelId) {
+        return;
+      }
+      this.lastAppliedNetSeq = frame.seq;
+    }
+    const now = performance.now();
+    if (this.remoteFrame && this.remoteFrame.levelId === frame.levelId) {
+      const dtMs = now - this.remoteFrameAt;
+      if (dtMs >= 16 && dtMs <= 220) {
+        this.remoteFrameInterval = this.remoteFrameInterval * 0.72 + dtMs * 0.28;
+      }
+      this.prevRemoteFrame = this.remoteFrame;
+    } else {
+      this.prevRemoteFrame = null;
+      this.remoteFrameInterval = 48;
+    }
     this.remoteFrame = frame;
+    this.remoteFrameAt = now;
+
     if (frame.levelId && (!this.level || this.level.id !== frame.levelId)) {
       this.level = LEVEL_MAP[frame.levelId];
     }
@@ -471,12 +507,15 @@ export class GameEngine {
       soundEngine.playMusic(frame.musicTrack as MusicTrack);
     }
     if (frame.sfx && frame.sfx.length > 0) {
+      // Queue SFX with hard cap so network packet bursts never stall Web Audio
       for (const cue of frame.sfx) {
-        this.replaySfxCue(cue);
+        if (this.pendingRemoteSfx.length >= 8) this.pendingRemoteSfx.shift();
+        this.pendingRemoteSfx.push(cue);
       }
     }
     if (frame.hud) {
-      this.callbacks.onHudUpdate(frame.hud as HudSnapshot);
+      // Defer React HUD state update to RAF loop so burst packets never trigger synchronous React storms
+      this.pendingRemoteHud = frame.hud as HudSnapshot;
     }
   }
 
@@ -553,8 +592,18 @@ export class GameEngine {
     this.pendingSpawns = [];
     this.sfxQueue = [];
     this.remoteFrame = null;
+    this.prevRemoteFrame = null;
+    this.remoteFrameAt = 0;
+    this.remoteFrameInterval = 48;
+    this.lastAppliedNetSeq = 0;
+    this.pendingRemoteHud = null;
+    this.pendingRemoteSfx = [];
     this.lastGuestMusicTrack = null;
+    this.lastSentMusicTrack = null;
     this.netFrameTimer = 0;
+    this.netFrameSeq = 0;
+    this.lastNetHudSig = '';
+    this.lastNetHudTime = -10;
     this.guestInputTimer = 0;
     this.lastGuestInputKey = '';
     this.remoteP2Latched = { melee: false, jump: false, swap: false };
@@ -590,11 +639,13 @@ export class GameEngine {
 
     if (this.onlineMode !== 'guest') {
       this.showAnnouncement(
-        this.level.mode === 'highway'
-          ? 'ХАЙВЕЙ! 8-НАПРАВЛЕННАЯ СТРЕЛЬБА НА БАЙКАХ!'
-          : this.level.mode === 'elevator'
-            ? 'ЛИФТ К ДИРЕКТОРУ! ВРАГИ ПРЫГАЮТ СВЕРХУ!'
-            : `${this.level.name.toUpperCase()}`,
+        this.level.mode === 'flight'
+          ? 'ПОЛЁТ НАД КРЫШАМИ · УНИЧТОЖЬ ПОДСТАНЦИЮ!'
+          : this.level.mode === 'highway'
+            ? 'ХАЙВЕЙ! 8-НАПРАВЛЕННАЯ СТРЕЛЬБА НА БАЙКАХ!'
+            : this.level.mode === 'elevator'
+              ? 'ЛИФТ К ДИРЕКТОРУ! ВРАГИ ПРЫГАЮТ СВЕРХУ!'
+              : `${this.level.name.toUpperCase()}`,
         2.6
       );
       this.setMusic(this.level.musicTrack);
@@ -614,11 +665,12 @@ export class GameEngine {
   private createPlayer(slot: 1 | 2, heroId: HeroId): SimPlayer {
     const hero = HERO_MAP[heroId];
     const maxArmorPips = Math.max(0, hero.stats.hp - 2);
+    const isFlight = this.level?.mode === 'flight';
     return {
       slot,
       heroId,
       x: 75 + (slot === 2 ? 24 : 0),
-      y: slot === 1 ? 188 : 226,
+      y: isFlight ? (slot === 1 ? 116 : 162) : slot === 1 ? 188 : 226,
       z: 0,
       vx: 0,
       vy: 0,
@@ -634,6 +686,7 @@ export class GameEngine {
       secondaryWeaponId: null,
       shootCd: 0,
       meleeCd: 0,
+      boostCd: 0,
       meleeTimer: 0,
       shootTimer: 0,
       hurtTimer: 0,
@@ -656,14 +709,15 @@ export class GameEngine {
     this.zones = this.zones.filter((z) => z.fromPlayer);
 
     const spawnBaseX = Math.max(this.camX + 68, this.checkpointReached ? this.checkpointCamX + 68 : this.camX + 68);
+    const isFlight = this.level.mode === 'flight';
     this.players.forEach((p, idx) => {
       p.alive = true;
       p.lives = 3;
       p.hpSegments = 3;
       p.armorPips = p.maxArmorPips;
       p.x = spawnBaseX + idx * 24;
-      p.y = idx === 0 ? 188 : 226;
-      p.z = 70;
+      p.y = isFlight ? (idx === 0 ? 116 : 162) : idx === 0 ? 188 : 226;
+      p.z = isFlight ? 0 : 70;
       p.vz = 0;
       p.invulnTimer = 2.8;
       p.hurtTimer = 0;
@@ -701,9 +755,15 @@ export class GameEngine {
           this.update(dt);
           if (this.onlineMode === 'host') {
             this.netFrameTimer += dt;
-            if (this.netFrameTimer >= 0.033) {
-              this.netFrameTimer = 0;
-              this.callbacks.onNetFrame?.(this.buildNetFrame());
+            // ~22 Hz compact snapshots + backpressure guard: skip building/sending if socket buffer is backed up
+            if (this.netFrameTimer >= 0.045) {
+              if (!this.callbacks.canSendNetFrame || this.callbacks.canSendNetFrame()) {
+                this.netFrameTimer = 0;
+                this.callbacks.onNetFrame?.(this.buildNetFrame());
+              } else {
+                // Keep timer primed so we flush immediately on the very next free frame
+                this.netFrameTimer = 0.045;
+              }
             }
           }
         }
@@ -724,6 +784,20 @@ export class GameEngine {
   }
 
   private updateGuestClient(dt: number): void {
+    // Flush at most 1 coalesced HUD update per animation frame (zero React re-render storms!)
+    if (this.pendingRemoteHud) {
+      const hud = this.pendingRemoteHud;
+      this.pendingRemoteHud = null;
+      this.callbacks.onHudUpdate(hud);
+    }
+    // Replay up to 4 queued SFX cues per frame so packet bursts never choke Web Audio
+    if (this.pendingRemoteSfx.length > 0) {
+      const batch = this.pendingRemoteSfx.splice(0, 4);
+      for (const cue of batch) {
+        this.replaySfxCue(cue);
+      }
+    }
+
     this.guestInputTimer += dt;
     // Guest uses primary local controls (custom P1 keys, Touch, or Gamepad 1) to drive P2 online!
     const ctrl = this.readLocalSlot1Controls();
@@ -756,10 +830,11 @@ export class GameEngine {
     };
     const key = `${input.up?1:0}${input.down?1:0}${input.left?1:0}${input.right?1:0}${input.melee?1:0}${input.jump?1:0}${input.shoot?1:0}${input.swap?1:0}:${Math.round(input.analogX*10)},${Math.round(input.analogY*10)}`;
     const edgeChanged = key !== this.lastGuestInputKey;
-    if (edgeChanged || this.guestInputTimer >= 0.04) {
+    // Send immediately on any input change, otherwise lightweight 10 Hz heartbeat
+    if (edgeChanged || this.guestInputTimer >= 0.1) {
       this.guestInputTimer = 0;
       this.lastGuestInputKey = key;
-      this.callbacks.onLocalGuestInput?.(input);
+      this.callbacks.onLocalGuestInput?.(input, edgeChanged);
     }
   }
 
@@ -860,6 +935,15 @@ export class GameEngine {
       return;
     }
 
+    // Flight auto-scroll over city rooftops toward the factory substation
+    if (this.level.mode === 'flight' && !this.camLocked && !this.bossSpawned) {
+      const scrollStep = 82 * dt;
+      this.camX = Math.min(this.level.length - VIRTUAL_W, this.camX + scrollStep);
+      this.players.forEach((p) => {
+        if (p.alive) p.x += scrollStep;
+      });
+    }
+
     // Highway auto-scroll (deliberate cruiser pacing)
     if (this.level.mode === 'highway' && !this.camLocked && !this.bossSpawned) {
       const scrollStep = 104 * dt;
@@ -906,21 +990,31 @@ export class GameEngine {
     this.players.forEach((p) => this.updatePlayer(p, dt));
     this.flushClearedEntities();
 
-    // Beat 'em up camera follow
+    // Beat 'em up camera follow (smooth arcade scroll — NEVER yanks or teleports the trailing player in 2P!)
     const alivePlayers = this.players.filter((p) => p.alive);
     if (alivePlayers.length > 0 && !this.camLocked && this.level.mode === 'beatemup') {
-      const leadX = Math.max(...alivePlayers.map((p) => p.x));
-      const targetCamX = Math.max(this.camX, Math.min(this.level.length - VIRTUAL_W, leadX - VIRTUAL_W * 0.42));
-      this.camX += (targetCamX - this.camX) * Math.min(1, dt * 8);
+      const maxX = Math.max(...alivePlayers.map((p) => p.x));
+      const minX = Math.min(...alivePlayers.map((p) => p.x));
+      // In 2P co-op: advance gently on midpoint and never scroll past the trailing player (24px margin),
+      // so the leading player simply waits at the right edge instead of dragging P2!
+      const desiredCamX =
+        alivePlayers.length > 1
+          ? Math.min(minX - 24, (minX + maxX) * 0.5 - VIRTUAL_W * 0.42)
+          : maxX - VIRTUAL_W * 0.42;
+      const targetCamX = Math.max(this.camX, Math.min(this.level.length - VIRTUAL_W, desiredCamX));
+      const step = (targetCamX - this.camX) * Math.min(1, dt * 4.5);
+      this.camX += Math.min(step, 150 * dt);
     }
 
-    // Clamp players cleanly (elevator platform has tighter side rails)
+    // Clamp players cleanly (elevator platform has tighter side rails; flight uses full sky band)
     const minPlayX = this.level.mode === 'elevator' ? 28 : this.camX + 20;
     const maxPlayX = this.level.mode === 'elevator' ? VIRTUAL_W - 28 : this.camX + VIRTUAL_W - 22;
+    const minPlayY = this.level.mode === 'flight' ? FLIGHT_MIN_Y : FLOOR_MIN_Y + 4;
+    const maxPlayY = this.level.mode === 'flight' ? FLIGHT_MAX_Y : FLOOR_MAX_Y;
     this.players.forEach((p) => {
       if (!p.alive) return;
       p.x = Math.max(minPlayX, Math.min(maxPlayX, p.x));
-      p.y = Math.max(FLOOR_MIN_Y + 4, Math.min(FLOOR_MAX_Y, p.y));
+      p.y = Math.max(minPlayY, Math.min(maxPlayY, p.y));
     });
 
     // Multi-Checkpoints with dynamic HP / armor top-up & supply weapon crate!
@@ -935,19 +1029,25 @@ export class GameEngine {
         p.armorPips = p.maxArmorPips;
         this.spawnParticles(p.x, p.y, 18, '#FFB000', 10, 75);
       });
-      const heldSet = new Set(this.players.map((p) => p.weaponId));
-      const freshPool = WEAPONS.filter((w) => !heldSet.has(w.id));
-      const pickPool = freshPool.length > 0 ? freshPool : WEAPONS;
-      const bonusWpn = pickPool[Math.floor(Math.random() * pickPool.length)].id;
-      this.pickups.push({
-        id: this.nextEntityId++,
-        kind: 'weapon',
-        x: this.camX + 260,
-        y: 204,
-        weaponId: bonusWpn,
-        timer: 32,
-      });
-      this.showAnnouncement(`ЧЕКПОЙНТ ${this.nextCheckpointIdx}/${checkpoints.length}! +1 HP И ОРУЖИЕ!`, 2.2);
+      const dropCheckpointWeapon = this.level.mode !== 'flight' && this.nextCheckpointIdx % 2 === 1;
+      if (dropCheckpointWeapon) {
+        const heldSet = new Set(this.players.map((p) => p.weaponId));
+        const freshPool = WEAPONS.filter((w) => !heldSet.has(w.id));
+        const pickPool = freshPool.length > 0 ? freshPool : WEAPONS;
+        const bonusWpn = pickPool[Math.floor(Math.random() * pickPool.length)].id;
+        this.pickups.push({
+          id: this.nextEntityId++,
+          kind: 'weapon',
+          x: this.camX + 260,
+          y: 204,
+          weaponId: bonusWpn,
+          timer: 32,
+        });
+      }
+      this.showAnnouncement(
+        `ЧЕКПОЙНТ ${this.nextCheckpointIdx}/${checkpoints.length}! ${dropCheckpointWeapon ? '+1 HP И ОРУЖИЕ!' : '+1 HP И БРОНЯ!'}`,
+        2.2
+      );
       soundEngine.playPickupBeer();
       this.queueSfx('beer');
       this.emitHud();
@@ -1003,7 +1103,7 @@ export class GameEngine {
             }
           } else if (hz.kind === 'slime_river') {
             if (dx < hz.w * 0.45 && dy < hz.h * 0.52) {
-              if (p.z >= 12) {
+              if (p.z >= 8) {
                 if (!this.clearedHazards.has(key)) {
                   this.clearedHazards.add(key);
                   p.score += 200;
@@ -1158,8 +1258,19 @@ export class GameEngine {
         this.camX = this.level.length - VIRTUAL_W;
         this.checkpointReached = true;
         this.checkpointCamX = this.camX;
-        this.spawnEnemy(this.level.bossKind, this.camX + VIRTUAL_W - 72, 206, false);
-        this.showAnnouncement(`ВНИМАНИЕ! БОСС: ${this.level.bossName}`, 3.0);
+        const bossSpawnX =
+          this.level.bossKind === 'boss_electrician'
+            ? this.camX + VIRTUAL_W - 112
+            : this.camX + VIRTUAL_W - 72;
+        const bossSpawnY =
+          this.level.bossKind === 'boss_electrician' ? FLIGHT_ROOF_Y : 206;
+        this.spawnEnemy(this.level.bossKind, bossSpawnX, bossSpawnY, false);
+        this.showAnnouncement(
+          this.level.bossKind === 'boss_electrician'
+            ? `БОСС: ${this.level.bossName}! ВЫРУБИ ЕГО И ВЗОРВИ ПОДСТАНЦИЮ!`
+            : `ВНИМАНИЕ! БОСС: ${this.level.bossName}`,
+          3.4
+        );
         soundEngine.playBossWarn();
         this.queueSfx('boss_warn');
         this.setMusic('boss');
@@ -1260,13 +1371,16 @@ export class GameEngine {
     });
 
     // Scale enemy count cleanly for Difficulty (Medium +40% / Hard +85%) AND 2P Co-Op (+35% stacked)!
+    const isFlight = this.level.mode === 'flight';
     const extraCount = Math.round(zone.spawns.length * (totalCountMult - 1));
     if (extraCount > 0) {
       const mobilePool = zone.spawns.filter((s) => s.kind !== 'turret');
       const fallbackPool = mobilePool.length > 0 ? mobilePool : zone.spawns;
       for (let ex = 0; ex < extraCount; ex++) {
         const template = fallbackPool[ex % fallbackPool.length];
-        const laneY = FLOOR_MIN_Y + 18 + ((ex * 29 + 13) % Math.max(24, FLOOR_MAX_Y - FLOOR_MIN_Y - 26));
+        const laneY = isFlight
+          ? FLIGHT_MIN_Y + 14 + ((ex * 37 + 19) % (FLIGHT_MAX_Y - FLIGHT_MIN_Y - 34))
+          : FLOOR_MIN_Y + 18 + ((ex * 29 + 13) % Math.max(24, FLOOR_MAX_Y - FLOOR_MIN_Y - 26));
         if (forceDropFromTop) {
           const dropX = 64 + ((ex * 73 + 31) % (VIRTUAL_W - 128));
           this.pendingSpawns.push({
@@ -1290,7 +1404,7 @@ export class GameEngine {
       }
     }
 
-    if (zone.dropWeapon) {
+    if (zone.dropWeapon && !isFlight && this.activeZoneIndex % 2 === 0) {
       this.pickups.push({
         id: this.nextEntityId++,
         kind: 'weapon',
@@ -1305,7 +1419,7 @@ export class GameEngine {
         id: this.nextEntityId++,
         kind: 'beer',
         x: (forceDropFromTop ? 0 : this.camX) + 150 + Math.random() * 120,
-        y: 185 + Math.random() * 40,
+        y: isFlight ? 90 + Math.random() * 92 : 185 + Math.random() * 40,
         timer: 26,
       });
     }
@@ -1425,6 +1539,7 @@ export class GameEngine {
     p.animTime += dt;
     if (p.shootCd > 0) p.shootCd -= dt;
     if (p.meleeCd > 0) p.meleeCd -= dt;
+    if (p.boostCd > 0) p.boostCd -= dt;
     if (p.meleeTimer > 0) p.meleeTimer -= dt;
     if (p.shootTimer > 0) p.shootTimer -= dt;
     if (p.hurtTimer > 0) p.hurtTimer -= dt;
@@ -1439,24 +1554,22 @@ export class GameEngine {
     // Deliberate classic 16-bit pacing (~28% slower so stages aren't sprinted through)
     const baseSpeed = 62 + hero.stats.speed * 12;
     const isHighway = this.level.mode === 'highway';
+    const isFlight = this.level.mode === 'flight';
     const len = Math.hypot(dx, dy);
     if (len > 0) {
       const nx = dx / len;
       const ny = dy / len;
       const throttle = useAnalog ? Math.min(1, len) : 1;
-      p.vx = nx * baseSpeed * throttle * (isHighway ? 1.15 : 1);
-      p.vy = ny * baseSpeed * throttle * 0.72;
+      p.vx = nx * baseSpeed * throttle * (isFlight ? 1.18 : isHighway ? 1.15 : 1);
+      p.vy = ny * baseSpeed * throttle * (isFlight ? 1.04 : 0.72);
       p.moving = true;
 
       if (isHighway) {
-        // Harley cruiser ALWAYS faces forward (right) on the one-way highway!
+        // Harley always faces forward (right) while rider aims freely in all 8 directions (including backwards)!
         p.facing = 1;
-        // Aim forward / forward-diagonal while riding (never turns bike backwards)
-        const aimDx = Math.max(0.35, nx > -0.1 ? nx : 0.85);
-        const aimAngle = Math.round(Math.atan2(ny, aimDx) / (Math.PI / 4)) * (Math.PI / 4);
+        const aimAngle = Math.round(Math.atan2(ny, nx) / (Math.PI / 4)) * (Math.PI / 4);
         p.aimX = Math.cos(aimAngle);
         p.aimY = Math.sin(aimAngle);
-        // Characteristic Harley V-Twin throttle rev sound when accelerating right!
         if (dx > 0.16 && this.harleyRevCd <= 0) {
           this.harleyRevCd = 0.16;
           soundEngine.playHarleyThrottle(true);
@@ -1464,6 +1577,7 @@ export class GameEngine {
           this.spawnParticles(p.x - 24, p.y - 2, p.z + 6, '#CBD5E1', 1, 40);
         }
       } else {
+        // Both ground combat & unmanned quadcopter flight turn cleanly left/right so firing forward AND backward works effortlessly!
         if (Math.abs(dx) > 0.14) p.facing = dx > 0 ? 1 : -1;
         // Snap aim cleanly to 8 arcade directions for reliable run 'n' gun feel
         const snapAngle = Math.round(Math.atan2(ny, nx) / (Math.PI / 4)) * (Math.PI / 4);
@@ -1482,24 +1596,29 @@ export class GameEngine {
     p.x += p.vx * dt;
     p.y += p.vy * dt;
 
-    // Jump
-    if (ctrl.jump && p.z <= 0.1) {
-      p.vz = p.heroId === 'vano' ? 245 : 215;
-      soundEngine.playJump();
-      this.queueSfx('jump');
-      this.spawnParticles(p.x, p.y, 0, '#94A3B8', 5, 45);
-    }
-    if (p.z > 0 || p.vz > 0) {
-      p.z += p.vz * dt;
-      p.vz -= 640 * dt;
-      if (p.z <= 0) {
-        p.z = 0;
-        p.vz = 0;
+    // Jump (disabled in flight mode — quadcopter flies freely in 2D without jumping)
+    if (isFlight) {
+      p.z = 0;
+      p.vz = 0;
+    } else {
+      if (ctrl.jump && p.z <= 0.1) {
+        p.vz = p.heroId === 'vano' ? 245 : 215;
+        soundEngine.playJump();
+        this.queueSfx('jump');
+        this.spawnParticles(p.x, p.y, 0, '#94A3B8', 5, 45);
+      }
+      if (p.z > 0 || p.vz > 0) {
+        p.z += p.vz * dt;
+        p.vz -= 640 * dt;
+        if (p.z <= 0) {
+          p.z = 0;
+          p.vz = 0;
+        }
       }
     }
 
-    // Pickup / Swap weapon
-    if (ctrl.swap) {
+    // Pickup / Swap weapon (disabled in unmanned quadcopter flight stage)
+    if (ctrl.swap && !isFlight) {
       const nearbyIdx = this.pickups.findIndex(
         (pk) => pk.kind === 'weapon' && Math.hypot(pk.x - p.x, pk.y - p.y) < 36
       );
@@ -1538,34 +1657,67 @@ export class GameEngine {
       }
     }
 
-    // Melee Attack (iterate over safe snapshot!)
+    // Melee Attack (or Heavy Micro-Rocket Burst on Unmanned Quadcopter!)
     if (ctrl.melee && p.meleeCd <= 0) {
-      const isHeavyMelee = p.heroId === 'zavod_killer' || p.heroId === 'sandro';
-      p.meleeCd = isHeavyMelee ? 0.34 : 0.28;
-      p.meleeTimer = 0.16;
-      soundEngine.playMelee(isHeavyMelee);
-      this.queueSfx('melee', isHeavyMelee);
-      const meleeDmg = (p.heroId === 'zavod_killer' ? 36 : p.heroId === 'sandro' ? 28 : 22) + hero.stats.damage * 2;
-      const reach = p.heroId === 'zavod_killer' ? 52 : 44;
-
-      const snapshot = [...this.enemies];
-      for (const e of snapshot) {
-        if (e.hacked || e.dead || (e.dropping && e.z > 36)) continue;
-        const relX = (e.x - p.x) * p.facing;
-        const relY = Math.abs(e.y - p.y);
-        if (relX > -10 && relX < reach + (e.isBoss ? 14 : 0) && relY < 28) {
-          this.damageEnemy(e, meleeDmg, p.slot, true, p.facing * (isHeavyMelee ? 92 : 54), 0.18, 0, false);
-        }
-      }
-
-      if (this.friendlyFire) {
-        this.players.forEach((other) => {
-          if (other.slot === p.slot || !other.alive) return;
-          const relX = (other.x - p.x) * p.facing;
-          if (relX > -4 && relX < reach - 4 && Math.abs(other.y - p.y) < 22 && Math.abs(other.z - p.z) < 24) {
-            this.damagePlayer(other, 1, 'ОГОНЬ ПО СВОИМ!');
-          }
+      if (isFlight) {
+        p.meleeCd = 0.56;
+        p.meleeTimer = 0.18;
+        const baseAngle = Math.atan2(p.aimY, p.aimX);
+        const rocketDmg = Math.round(40 * (0.92 + hero.stats.damage * 0.04));
+        this.projectiles.push({
+          x: p.x + Math.cos(baseAngle) * 18,
+          y: p.y + Math.sin(baseAngle) * 8 + 3,
+          z: 10,
+          vx: Math.cos(baseAngle) * 395,
+          vy: Math.sin(baseAngle) * 395,
+          damage: rocketDmg,
+          distLeft: 430,
+          fromPlayer: true,
+          ownerSlot: p.slot,
+          weaponId: 'rc_launcher',
+          pierce: false,
+          hitIds: new Set(),
+          explosiveRadius: 52,
+          burnDuration: 0,
+          stunDuration: 0.16,
+          hacksTech: false,
+          smokeCloud: false,
+          color: '#F97316',
+          glowColor: '#FEF08A',
+          radius: 4.8,
         });
+        soundEngine.playWeaponSfx('rc_launcher', true, 0);
+        this.queueSfx('weapon', 'rc_launcher', true, 0);
+        this.spawnParticles(p.x + Math.cos(baseAngle) * 16, p.y + 3, 12, '#FEF08A', 5, 70);
+      } else {
+        const isHeavyMelee = p.heroId === 'zavod_killer' || p.heroId === 'sandro';
+        p.meleeCd = isHeavyMelee ? 0.34 : 0.28;
+        p.meleeTimer = 0.16;
+        soundEngine.playMelee(isHeavyMelee);
+        this.queueSfx('melee', isHeavyMelee);
+        const meleeDmg = (p.heroId === 'zavod_killer' ? 36 : p.heroId === 'sandro' ? 28 : 22) + hero.stats.damage * 2;
+        const reach = p.heroId === 'zavod_killer' ? 52 : 44;
+
+        const strikeDir = isHighway && p.aimX < -0.2 ? -1 : p.facing;
+        const snapshot = [...this.enemies];
+        for (const e of snapshot) {
+          if (e.hacked || e.dead || (e.dropping && e.z > 36)) continue;
+          const relX = (e.x - p.x) * strikeDir;
+          const relY = Math.abs(e.y - p.y);
+          if (relX > -14 && relX < reach + (e.isBoss ? 18 : 0) && relY < 28) {
+            this.damageEnemy(e, meleeDmg, p.slot, true, strikeDir * (isHeavyMelee ? 92 : 54), 0.18, 0, false);
+          }
+        }
+
+        if (this.friendlyFire) {
+          this.players.forEach((other) => {
+            if (other.slot === p.slot || !other.alive) return;
+            const relX = (other.x - p.x) * strikeDir;
+            if (relX > -4 && relX < reach - 4 && Math.abs(other.y - p.y) < 22 && Math.abs(other.z - p.z) < 24) {
+              this.damagePlayer(other, 1, 'ОГОНЬ ПО СВОИМ!');
+            }
+          });
+        }
       }
     }
 
@@ -1573,61 +1725,108 @@ export class GameEngine {
     const weapon = WEAPON_MAP[p.weaponId];
     const isNative = p.weaponId === hero.nativeWeaponId;
     if (ctrl.shoot) {
-      if (weapon.rampsUp || p.heroId === 'hooper') {
-        p.rampLevel = Math.min(1, p.rampLevel + dt * (p.heroId === 'hooper' ? 0.9 : 0.55));
+      if (isFlight) {
+        // Unmanned Combat Quadcopter Twin Gimbal Plasma Autocannon (consistent high DPS forwards & backwards!)
+        p.rampLevel = Math.min(1, p.rampLevel + dt * 0.5);
+        if (p.shootCd <= 0) {
+          const rateFactor = 0.92 + hero.stats.fireRate * 0.04;
+          p.shootCd = 0.145 / rateFactor;
+          p.shootTimer = 0.1;
+
+          const baseAngle = Math.atan2(p.aimY, p.aimX);
+          const cosA = Math.cos(baseAngle);
+          const sinA = Math.sin(baseAngle);
+          const perpX = -sinA;
+          const perpY = cosA;
+          const shellDmg = Math.round(11 * (0.92 + hero.stats.damage * 0.04));
+
+          // Twin parallel high-velocity plasma rounds along exact aim vector (forward, backward, or diagonal!)
+          for (const barrelOff of [-3.5, 3.5]) {
+            this.projectiles.push({
+              x: p.x + cosA * 18 + perpX * barrelOff,
+              y: p.y + sinA * 10 + perpY * barrelOff + 2,
+              z: 10,
+              vx: cosA * 545,
+              vy: sinA * 545,
+              damage: shellDmg,
+              distLeft: 445,
+              fromPlayer: true,
+              ownerSlot: p.slot,
+              weaponId: 'spinning',
+              pierce: false,
+              hitIds: new Set(),
+              explosiveRadius: 0,
+              burnDuration: 0,
+              stunDuration: 0,
+              hacksTech: p.heroId === 'bo',
+              smokeCloud: false,
+              color: p.slot === 2 ? '#39FF14' : '#38BDF8',
+              glowColor: '#E0F2FE',
+              radius: 3.3,
+            });
+          }
+
+          soundEngine.playWeaponSfx('spinning', true, p.rampLevel * 0.4);
+          this.queueSfx('weapon', 'spinning', true, p.rampLevel * 0.4);
+          this.spawnParticles(p.x + cosA * 20, p.y + sinA * 10 + 2, 12, '#38BDF8', 2, 65);
+        }
       } else {
-        p.rampLevel = Math.max(0, p.rampLevel - dt * 1.5);
-      }
-
-      if (p.shootCd <= 0) {
-        const nativeMult = isNative ? 1.1 : 1.0;
-        const heroRateFactor = 0.85 + hero.stats.fireRate * 0.06;
-        const rampFactor = 1 + p.rampLevel * 0.85;
-        p.shootCd = weapon.cooldown / (nativeMult * heroRateFactor * rampFactor);
-        p.shootTimer = 0.11;
-
-        const baseAngle = Math.atan2(p.aimY, p.aimX);
-        const dmg = Math.round(weapon.damage * (0.86 + hero.stats.damage * 0.06) * nativeMult);
-        const blastRadius =
-          weapon.explosiveRadius > 0 && p.heroId === 'koren'
-            ? weapon.explosiveRadius + 18
-            : weapon.explosiveRadius;
-
-        for (let i = 0; i < weapon.pellets; i++) {
-          const offset =
-            weapon.pellets === 1
-              ? (Math.random() - 0.5) * weapon.spread
-              : ((i / (weapon.pellets - 1)) - 0.5) * weapon.spread + (Math.random() - 0.5) * 0.05;
-          const ang = baseAngle + offset;
-          this.projectiles.push({
-            x: p.x + Math.cos(baseAngle) * 18,
-            y: p.y + Math.sin(baseAngle) * 6,
-            z: p.z + 22,
-            vx: Math.cos(ang) * weapon.speed,
-            vy: Math.sin(ang) * weapon.speed * 0.72,
-            damage: dmg,
-            distLeft: weapon.range * (p.heroId === 'koren' ? 1.12 : 1),
-            fromPlayer: true,
-            ownerSlot: p.slot,
-            weaponId: weapon.id,
-            pierce: weapon.pierce,
-            hitIds: new Set(),
-            explosiveRadius: blastRadius,
-            burnDuration: weapon.burnDuration,
-            stunDuration: weapon.stunDuration,
-            hacksTech: weapon.hacksTech || p.heroId === 'bo',
-            smokeCloud: weapon.smokeCloud,
-            color: weapon.color,
-            glowColor: weapon.glowColor,
-            radius: weapon.id === 'bass_beam' ? 6 : weapon.id === 'rc_launcher' || weapon.id === 'dymok' ? 5 : 3.5,
-          });
+        if (weapon.rampsUp || p.heroId === 'hooper') {
+          p.rampLevel = Math.min(1, p.rampLevel + dt * (p.heroId === 'hooper' ? 0.9 : 0.55));
+        } else {
+          p.rampLevel = Math.max(0, p.rampLevel - dt * 1.5);
         }
 
-        soundEngine.playWeaponSfx(weapon.id, isNative, p.rampLevel);
-        this.queueSfx('weapon', weapon.id, isNative, p.rampLevel);
-        // Ejected brass shell + muzzle spark!
-        this.spawnParticles(p.x + Math.cos(baseAngle) * 20, p.y, p.z + 22, weapon.glowColor, 3, 60);
-        this.spawnParticles(p.x - p.facing * 4, p.y, p.z + 24, '#FACC15', 1, 55);
+        if (p.shootCd <= 0) {
+          const nativeMult = isNative ? 1.1 : 1.0;
+          const heroRateFactor = 0.85 + hero.stats.fireRate * 0.06;
+          const rampFactor = 1 + p.rampLevel * 0.85;
+          p.shootCd = weapon.cooldown / (nativeMult * heroRateFactor * rampFactor);
+          p.shootTimer = 0.11;
+
+          const baseAngle = Math.atan2(p.aimY, p.aimX);
+          const dmg = Math.round(weapon.damage * (0.86 + hero.stats.damage * 0.06) * nativeMult);
+          const blastRadius =
+            weapon.explosiveRadius > 0 && p.heroId === 'koren'
+              ? weapon.explosiveRadius + 18
+              : weapon.explosiveRadius;
+
+          for (let i = 0; i < weapon.pellets; i++) {
+            const offset =
+              weapon.pellets === 1
+                ? (Math.random() - 0.5) * weapon.spread
+                : ((i / (weapon.pellets - 1)) - 0.5) * weapon.spread + (Math.random() - 0.5) * 0.05;
+            const ang = baseAngle + offset;
+            this.projectiles.push({
+              x: p.x + Math.cos(baseAngle) * 18,
+              y: p.y + Math.sin(baseAngle) * 6,
+              z: p.z + 22,
+              vx: Math.cos(ang) * weapon.speed,
+              vy: Math.sin(ang) * weapon.speed * 0.72,
+              damage: dmg,
+              distLeft: weapon.range * (p.heroId === 'koren' ? 1.12 : 1),
+              fromPlayer: true,
+              ownerSlot: p.slot,
+              weaponId: weapon.id,
+              pierce: weapon.pierce,
+              hitIds: new Set(),
+              explosiveRadius: blastRadius,
+              burnDuration: weapon.burnDuration,
+              stunDuration: weapon.stunDuration,
+              hacksTech: weapon.hacksTech || p.heroId === 'bo',
+              smokeCloud: weapon.smokeCloud,
+              color: weapon.color,
+              glowColor: weapon.glowColor,
+              radius: weapon.id === 'bass_beam' ? 6 : weapon.id === 'rc_launcher' || weapon.id === 'dymok' ? 5 : 3.5,
+            });
+          }
+
+          soundEngine.playWeaponSfx(weapon.id, isNative, p.rampLevel);
+          this.queueSfx('weapon', weapon.id, isNative, p.rampLevel);
+          // Ejected brass shell + muzzle spark!
+          this.spawnParticles(p.x + Math.cos(baseAngle) * 20, p.y, p.z + 22, weapon.glowColor, 3, 60);
+          this.spawnParticles(p.x - p.facing * 4, p.y, p.z + 24, '#FACC15', 1, 55);
+        }
       }
     } else {
       p.rampLevel = Math.max(0, p.rampLevel - dt * 1.8);
@@ -1650,15 +1849,19 @@ export class GameEngine {
       guard_shield: { hp: 96, speed: 32, score: 320, shielded: true },
       turret: { hp: 75, speed: 0, score: 280 },
       drone: { hp: 48, speed: 60, score: 250 },
+      mini_heli: { hp: 46, speed: 70, score: 260 },
+      heavy_heli: { hp: 96, speed: 48, score: 420 },
       biker: { hp: 64, speed: 74, score: 300 },
       beer_truck: { hp: 145, speed: 48, score: 480 },
       elite: { hp: 108, speed: 63, score: 420 },
-      boss_drunk: { hp: 700, speed: 50, score: 2800, phases: 2 },
-      boss_buffalo: { hp: 860, speed: 48, score: 3600, phases: 2 },
-      boss_chief: { hp: 1040, speed: 55, score: 4500, shielded: true, phases: 3 },
-      boss_caravan: { hp: 1220, speed: 64, score: 5600, phases: 3 },
-      boss_elevator: { hp: 1320, speed: 58, score: 6500, phases: 3 },
-      boss_director: { hp: 1680, speed: 68, score: 9000, phases: 3 },
+      boss_drunk: { hp: 910, speed: 50, score: 2800, phases: 2 },
+      boss_buffalo: { hp: 1120, speed: 48, score: 3600, phases: 2 },
+      boss_electrician: { hp: 1205, speed: 62, score: 4100, phases: 3 },
+      boss_substation: { hp: 320, speed: 0, score: 2500, phases: 1 },
+      boss_chief: { hp: 1350, speed: 55, score: 4500, shielded: true, phases: 3 },
+      boss_caravan: { hp: 1585, speed: 64, score: 5600, phases: 3 },
+      boss_elevator: { hp: 1715, speed: 58, score: 6500, phases: 3 },
+      boss_director: { hp: 2185, speed: 68, score: 9000, phases: 3 },
     };
 
     const cfg = presets[kind];
@@ -1677,17 +1880,27 @@ export class GameEngine {
           : 1.0;
     const maxHp = Math.round(cfg.hp * coopScale * progressHpMult * diffHpMult);
 
+    const isFlight = this.level?.mode === 'flight';
     const startZ = dropFromTop
       ? (isBoss ? 235 : 205 + Math.random() * 35)
-      : kind === 'drone'
+      : kind === 'drone' && !isFlight
         ? 20
         : 0;
+
+    const clampedY =
+      kind === 'boss_electrician'
+        ? FLIGHT_ROOF_Y
+        : kind === 'boss_substation'
+          ? 184
+          : isFlight
+            ? Math.max(FLIGHT_MIN_Y + 8, Math.min(FLIGHT_MAX_Y - 12, y))
+            : Math.max(FLOOR_MIN_Y + 8, Math.min(FLOOR_MAX_Y - 4, y));
 
     this.enemies.push({
       id: this.nextEntityId++,
       kind,
       x,
-      y: Math.max(FLOOR_MIN_Y + 8, Math.min(FLOOR_MAX_Y - 4, y)),
+      y: clampedY,
       z: startZ,
       vx: 0,
       vy: 0,
@@ -1715,6 +1928,7 @@ export class GameEngine {
       scoreValue: cfg.score,
       shielded: Boolean(cfg.shielded),
       dropping: dropFromTop,
+      bouncePause: kind === 'boss_electrician' ? 0.35 : 0,
     });
   }
 
@@ -1834,6 +2048,101 @@ export class GameEngine {
         }
       }
 
+      // Stationary destructible power substation — pulses ambient high-voltage arcs until blown up!
+      if (e.kind === 'boss_substation') {
+        if (Math.random() < dt * 7) {
+          this.spawnParticles(
+            e.x + (Math.random() - 0.5) * 34,
+            e.y - 24 + (Math.random() - 0.5) * 44,
+            14,
+            Math.random() < 0.5 ? '#38BDF8' : '#FEF08A',
+            2,
+            65
+          );
+        }
+        continue;
+      }
+
+      // Crazy Electrician Boss: spring-loaded boots bouncing high off the rooftop!
+      if (e.kind === 'boss_electrician') {
+        const ratio = e.hp / e.maxHp;
+        const desiredPhase = ratio < 0.36 ? 3 : ratio < 0.7 ? 2 : 1;
+        if (desiredPhase > e.phase) {
+          e.phase = desiredPhase;
+          this.triggerShake(6, 0.35);
+          soundEngine.playBossWarn();
+          this.showAnnouncement(`${this.level.bossName} · ФАЗА ${e.phase}!`, 1.8);
+          this.spawnParticles(e.x, e.y, 18, '#38BDF8', 24, 145);
+        }
+
+        e.facing = target.x >= e.x ? 1 : -1;
+
+        if (e.y >= FLIGHT_ROOF_Y && e.vy >= 0) {
+          e.y = FLIGHT_ROOF_Y;
+          e.vx = 0;
+          e.bouncePause -= dt;
+          if (e.bouncePause <= 0) {
+            // BOING! Launch high off the roof on coil springs!
+            e.vy = -(285 + Math.random() * 68 + (e.phase - 1) * 22);
+            const arenaMinX = this.camX + 78;
+            const arenaMaxX = this.camX + VIRTUAL_W - 86;
+            const aimSpotX = Math.max(
+              arenaMinX,
+              Math.min(arenaMaxX, target.x + (Math.random() < 0.5 ? 72 : -58))
+            );
+            e.vx = Math.max(-125, Math.min(125, (aimSpotX - e.x) * 1.08));
+            soundEngine.playJump();
+            this.queueSfx('jump');
+            this.spawnParticles(e.x, FLIGHT_ROOF_Y, 6, '#38BDF8', 8, 80);
+            this.spawnParticles(e.x, FLIGHT_ROOF_Y, 4, '#FEF08A', 6, 70);
+          }
+        } else {
+          e.x += e.vx * slowMult * dt;
+          e.y += e.vy * dt;
+          e.vy += 385 * dt;
+          if (e.x < this.camX + 68) {
+            e.x = this.camX + 68;
+            e.vx = Math.abs(e.vx);
+          } else if (e.x > this.camX + VIRTUAL_W - 82) {
+            e.x = this.camX + VIRTUAL_W - 82;
+            e.vx = -Math.abs(e.vx);
+          }
+          if (e.y < FLIGHT_MIN_Y + 14) {
+            e.y = FLIGHT_MIN_Y + 14;
+            e.vy = Math.abs(e.vy) * 0.35;
+          }
+          if (e.y >= FLIGHT_ROOF_Y) {
+            e.y = FLIGHT_ROOF_Y;
+            e.vy = 0;
+            e.vx = 0;
+            e.bouncePause = Math.max(0.3, 0.46 - (e.phase - 1) * 0.06);
+            this.spawnParticles(e.x, FLIGHT_ROOF_Y, 4, '#FEF08A', 7, 65);
+            this.triggerShake(2.2, 0.1);
+          }
+        }
+
+        // Electric contact shock if a flying player crashes directly into him
+        for (const pl of alivePlayers) {
+          if (Math.hypot(pl.x - e.x, pl.y - (e.y - 16)) < 24) {
+            this.damagePlayer(pl, 1, 'ТОК!');
+          }
+        }
+
+        if (e.telegraphTimer > 0) {
+          e.telegraphTimer -= dt;
+          if (e.telegraphTimer <= 0) {
+            this.executeEnemyAttack(e, target);
+            e.pendingAttack = 'none';
+          }
+        } else {
+          e.attackCd -= dt;
+          if (e.attackCd <= 0) {
+            this.chooseEnemyTelegraph(e, target, bestDist);
+          }
+        }
+        continue;
+      }
+
       // Boss phase transitions
       if (e.isBoss && e.maxPhases > 1) {
         const ratio = e.hp / e.maxHp;
@@ -1865,8 +2174,27 @@ export class GameEngine {
         e.facing = -1;
       }
 
+      const isFlight = this.level.mode === 'flight';
       if (e.kind === 'turret') {
         // Stationary
+      } else if (e.kind === 'mini_heli') {
+        const orbitX =
+          e.id % 3 === 0
+            ? this.camX + VIRTUAL_W - 88 - Math.sin(e.animTime * 1.4 + e.id) * 44
+            : target.x + (e.id % 2 === 0 ? 128 : -118);
+        const clampedOrbitX = Math.max(this.camX + 46, Math.min(this.camX + VIRTUAL_W - 36, orbitX));
+        const mdx = clampedOrbitX - e.x;
+        e.x += Math.sign(mdx) * Math.min(Math.abs(mdx), e.speed * slowMult * dt);
+        const hoverY = target.y + Math.sin(e.animTime * 2.8 + e.id) * 34;
+        const mdy = hoverY - e.y;
+        e.y += Math.sign(mdy) * Math.min(Math.abs(mdy), e.speed * 0.78 * slowMult * dt);
+      } else if (e.kind === 'heavy_heli') {
+        const hoverX = this.camX + VIRTUAL_W - 74 - (e.id % 3) * 28;
+        const mdx = hoverX - e.x;
+        e.x += Math.sign(mdx) * Math.min(Math.abs(mdx), e.speed * slowMult * dt);
+        const hoverY = target.y * 0.65 + (115 + Math.sin(e.animTime * 1.6 + e.id) * 42) * 0.35;
+        const mdy = hoverY - e.y;
+        e.y += Math.sign(mdy) * Math.min(Math.abs(mdy), e.speed * 0.72 * slowMult * dt);
       } else if (e.kind === 'boss_caravan' || e.kind === 'beer_truck') {
         const targetX = this.camX + VIRTUAL_W - (e.kind === 'boss_caravan' ? 92 : 66);
         e.x += (targetX - e.x) * Math.min(1, dt * 2.5);
@@ -1884,7 +2212,7 @@ export class GameEngine {
         } else if (Math.abs(dx) > desiredDist + 32) {
           e.x += Math.sign(dx) * e.speed * slowMult * dt;
         }
-        e.y += Math.sign(dy) * Math.min(Math.abs(dy), e.speed * 0.68 * slowMult * dt);
+        e.y += Math.sign(dy) * Math.min(Math.abs(dy), e.speed * (isFlight ? 0.85 : 0.68) * slowMult * dt);
       } else {
         if (Math.abs(dx) > 28) {
           e.x += Math.sign(dx) * e.speed * slowMult * dt;
@@ -1895,7 +2223,11 @@ export class GameEngine {
       }
 
       e.x = Math.max(this.camX + 20, Math.min(this.camX + VIRTUAL_W - 20, e.x));
-      e.y = Math.max(FLOOR_MIN_Y + 6, Math.min(FLOOR_MAX_Y - 2, e.y));
+      if (isFlight) {
+        e.y = Math.max(FLIGHT_MIN_Y + 8, Math.min(FLIGHT_MAX_Y - 10, e.y));
+      } else {
+        e.y = Math.max(FLOOR_MIN_Y + 6, Math.min(FLOOR_MAX_Y - 2, e.y));
+      }
 
       e.attackCd -= dt;
       if (e.attackCd <= 0) {
@@ -1942,11 +2274,15 @@ export class GameEngine {
       } else {
         e.attackCd = 0.45 * cdMult;
       }
-    } else if (e.kind === 'drone') {
-      // Combat helicopter-drones lock on visibly and fire aggressive 2-shot laser bursts!
+    } else if (e.kind === 'drone' || e.kind === 'mini_heli') {
+      // Combat drones & small helicopters lock on visibly and fire crisp bursts!
       e.pendingAttack = 'shoot';
-      e.telegraphTimer = 0.42 * tgMult;
-      e.attackCd = (1.32 + Math.random() * 0.35) * cdMult;
+      e.telegraphTimer = 0.4 * tgMult;
+      e.attackCd = (1.35 + Math.random() * 0.4) * cdMult;
+    } else if (e.kind === 'heavy_heli') {
+      e.pendingAttack = 'barrage';
+      e.telegraphTimer = 0.46 * tgMult;
+      e.attackCd = (1.85 + Math.random() * 0.35) * cdMult;
     } else if (e.kind === 'guard_gunner' || e.kind === 'turret' || e.kind === 'biker') {
       e.pendingAttack = 'shoot';
       e.telegraphTimer = 0.35 * tgMult;
@@ -1973,6 +2309,11 @@ export class GameEngine {
       e.pendingAttack = r < 0.46 ? 'crate' : r < 0.78 ? 'charge' : 'summon';
       e.telegraphTimer = 0.46 * phaseAccel * tgMult;
       e.attackCd = 1.52 * phaseAccel * cdMult;
+    } else if (e.kind === 'boss_electrician') {
+      const r = Math.random();
+      e.pendingAttack = r < 0.38 ? 'barrage' : r < 0.66 ? 'shoot' : r < 0.84 ? 'beam' : 'summon';
+      e.telegraphTimer = 0.38 * phaseAccel * tgMult;
+      e.attackCd = 1.28 * phaseAccel * cdMult;
     } else if (e.kind === 'boss_chief') {
       const r = Math.random();
       e.pendingAttack = r < 0.52 ? 'barrage' : r < 0.82 ? 'charge' : 'summon';
@@ -2084,16 +2425,47 @@ export class GameEngine {
         break;
       }
       case 'shoot': {
-        if (e.kind === 'drone') {
-          // Helicopter combat drone fires a crisp twin-bolt crimson plasma burst from its underslung gun!
-          const spreads = this.level.id === 6 ? [-0.11, 0.11] : [-0.07, 0.07];
+        const isFlight = this.level.mode === 'flight';
+        const vyScale = isFlight ? 1.0 : 0.72;
+        if (e.kind === 'boss_electrician') {
+          // High-voltage twin/triple lightning orb burst straight from the bouncing electrician!
+          const spreads = e.phase >= 2 ? [-0.16, 0, 0.16] : [-0.1, 0.1];
+          for (const sp of spreads) {
+            this.projectiles.push({
+              x: e.x + e.facing * 14,
+              y: e.y - 14,
+              z: 14,
+              vx: Math.cos(ang + sp) * 255 * projSpeed,
+              vy: Math.sin(ang + sp) * 255 * projSpeed,
+              damage: 1,
+              distLeft: 460,
+              fromPlayer: false,
+              pierce: false,
+              hitIds: new Set(),
+              explosiveRadius: 0,
+              burnDuration: 0,
+              stunDuration: 0,
+              hacksTech: false,
+              smokeCloud: false,
+              color: '#38BDF8',
+              glowColor: '#FEF08A',
+              radius: 5,
+            });
+          }
+          this.spawnParticles(e.x + e.facing * 14, e.y - 14, 16, '#38BDF8', 8, 95);
+          soundEngine.playWeaponSfx('firewall', false);
+          this.queueSfx('weapon', 'firewall', false, 0);
+        } else if (e.kind === 'drone' || e.kind === 'mini_heli') {
+          // Helicopter/drone fires a crisp twin-bolt plasma burst!
+          const spreads = this.level.id === 7 ? [-0.11, 0.11] : [-0.07, 0.07];
+          const boltSpeed = e.kind === 'mini_heli' ? 235 : 245;
           for (const sp of spreads) {
             this.projectiles.push({
               x: e.x + e.facing * 12,
               y: e.y,
-              z: 30,
-              vx: Math.cos(ang + sp) * 245 * projSpeed,
-              vy: Math.sin(ang + sp) * 175 * projSpeed,
+              z: isFlight ? 14 : 30,
+              vx: Math.cos(ang + sp) * boltSpeed * projSpeed,
+              vy: Math.sin(ang + sp) * boltSpeed * vyScale * projSpeed,
               damage: 1,
               distLeft: 430,
               fromPlayer: false,
@@ -2104,21 +2476,21 @@ export class GameEngine {
               stunDuration: 0,
               hacksTech: false,
               smokeCloud: false,
-              color: '#FF2A85',
+              color: e.kind === 'mini_heli' ? '#FACC15' : '#FF2A85',
               glowColor: '#FEF08A',
-              radius: 4.5,
+              radius: 4.2,
             });
           }
-          this.spawnParticles(e.x + e.facing * 14, e.y, 32, '#FF2A85', 5, 70);
+          this.spawnParticles(e.x + e.facing * 14, e.y, isFlight ? 14 : 32, '#FF2A85', 5, 70);
           soundEngine.playWeaponSfx('firewall', false);
           this.queueSfx('weapon', 'firewall', false, 0);
         } else {
           this.projectiles.push({
             x: e.x + e.facing * 14,
             y: e.y,
-            z: 20,
+            z: isFlight ? 14 : 20,
             vx: Math.cos(ang) * 230 * projSpeed,
-            vy: Math.sin(ang) * 160 * projSpeed,
+            vy: Math.sin(ang) * 230 * vyScale * projSpeed,
             damage: 1,
             distLeft: 400,
             fromPlayer: false,
@@ -2139,21 +2511,23 @@ export class GameEngine {
         break;
       }
       case 'barrage': {
+        const isFlight = this.level.mode === 'flight';
         const isDirector = e.kind === 'boss_director';
+        const isElectrician = e.kind === 'boss_electrician';
         const shots = isDirector
           ? 5 + e.phase + diff.extraBossShots
           : e.isBoss
             ? 4 + e.phase + diff.extraBossShots
             : 3 + (diff.extraBossShots >= 2 ? 1 : 0);
-        const fanArc = isDirector ? 0.92 : 0.76;
-        const speedX = isDirector ? 268 : e.isBoss ? 252 : 240;
-        const speedY = isDirector ? 195 : e.isBoss ? 185 : 175;
+        const fanArc = isDirector ? 0.92 : isElectrician ? 0.84 : 0.76;
+        const speedX = isDirector ? 268 : e.isBoss ? 252 : 230;
+        const speedY = isFlight ? speedX : isDirector ? 195 : e.isBoss ? 185 : 175;
         for (let s = 0; s < shots; s++) {
           const offset = ((s / (shots - 1)) - 0.5) * fanArc;
           this.projectiles.push({
             x: e.x + e.facing * 16,
-            y: e.y,
-            z: 24,
+            y: isElectrician ? e.y - 14 : e.y,
+            z: isFlight ? 14 : 24,
             vx: Math.cos(ang + offset) * speedX * projSpeed,
             vy: Math.sin(ang + offset) * speedY * projSpeed,
             damage: 1,
@@ -2166,9 +2540,15 @@ export class GameEngine {
             stunDuration: 0,
             hacksTech: false,
             smokeCloud: false,
-            color: isDirector ? '#39FF14' : e.kind === 'boss_elevator' ? '#FACC15' : '#FF2A85',
-            glowColor: '#FEF08A',
-            radius: isDirector ? 5 : 4.5,
+            color: isElectrician
+              ? '#38BDF8'
+              : isDirector
+                ? '#39FF14'
+                : e.kind === 'boss_elevator' || e.kind === 'heavy_heli'
+                  ? '#FACC15'
+                  : '#FF2A85',
+            glowColor: isElectrician ? '#E0F2FE' : '#FEF08A',
+            radius: isDirector || isElectrician ? 5 : 4.5,
           });
         }
         soundEngine.playWeaponSfx('firewall', false);
@@ -2176,15 +2556,19 @@ export class GameEngine {
         break;
       }
       case 'beam': {
-        // Director scales beam pressure across phases: 1 beam (P1) -> 2 beams (P2) -> 3 triangulated beams (P3)!
-        const beamCount = e.kind === 'boss_director' ? Math.min(3, e.phase) : 1;
+        const isFlight = this.level.mode === 'flight';
+        // Director & Electrician scale beam pressure across phases!
+        const beamCount =
+          e.kind === 'boss_director' || e.kind === 'boss_electrician'
+            ? Math.min(isFlight ? 2 : 3, e.phase)
+            : 1;
         const offsets =
           beamCount === 1
             ? [[0, 0]]
             : beamCount === 2
               ? [
                   [0, 0],
-                  [target.facing * 54, target.y > (FLOOR_MIN_Y + FLOOR_MAX_Y) * 0.5 ? -26 : 26],
+                  [target.facing * 58, target.y > (FLOOR_MIN_Y + FLOOR_MAX_Y) * 0.5 ? -26 : 26],
                 ]
               : [
                   [0, 0],
@@ -2195,10 +2579,12 @@ export class GameEngine {
           this.zones.push({
             kind: 'virus_beam',
             x: Math.max(this.camX + 34, Math.min(this.camX + VIRTUAL_W - 34, target.x + ox)),
-            y: Math.max(FLOOR_MIN_Y + 14, Math.min(FLOOR_MAX_Y - 10, target.y + oy)),
-            radius: e.kind === 'boss_director' ? 46 : 42,
-            timer: 1.75,
-            maxTimer: 1.75,
+            y: isFlight
+              ? FLIGHT_ROOF_Y
+              : Math.max(FLOOR_MIN_Y + 14, Math.min(FLOOR_MAX_Y - 10, target.y + oy)),
+            radius: e.kind === 'boss_director' ? 46 : 38,
+            timer: isFlight ? 1.45 : 1.75,
+            maxTimer: isFlight ? 1.45 : 1.75,
             tickCd: 0.19 * Math.max(0.62, diff.fireCooldownMult),
             fromPlayer: false,
           });
@@ -2212,20 +2598,24 @@ export class GameEngine {
         const effectiveCap = e.kind === 'boss_director' ? diff.bossSummonCap + 1 : diff.bossSummonCap;
         if (this.enemies.filter((x) => !x.dead).length < effectiveCap) {
           const dropTop = this.level.mode === 'elevator';
+          const isFlight = this.level.mode === 'flight';
           const minionKind: EnemyKind =
-            e.kind === 'boss_buffalo'
-              ? 'acid_punk'
-              : e.kind === 'boss_chief'
-                ? 'guard_gunner'
-                : e.kind === 'boss_caravan'
-                  ? 'biker'
-                  : e.kind === 'boss_elevator'
-                    ? (Math.random() < 0.65 ? 'acid_punk' : 'drone')
-                    : e.kind === 'boss_director' && e.phase >= 2
-                      ? 'elite'
-                      : 'drone';
+            e.kind === 'boss_electrician'
+              ? 'mini_heli'
+              : e.kind === 'boss_buffalo'
+                ? 'acid_punk'
+                : e.kind === 'boss_chief'
+                  ? 'guard_gunner'
+                  : e.kind === 'boss_caravan'
+                    ? 'biker'
+                    : e.kind === 'boss_elevator'
+                      ? (Math.random() < 0.65 ? 'acid_punk' : 'drone')
+                      : e.kind === 'boss_director' && e.phase >= 2
+                        ? 'elite'
+                        : 'drone';
           const sx = dropTop ? 70 + Math.random() * (VIRTUAL_W - 140) : this.camX + VIRTUAL_W - 24;
-          this.spawnEnemy(minionKind, sx, 172 + Math.random() * 68, dropTop);
+          const sy = isFlight ? 76 + Math.random() * 105 : 172 + Math.random() * 68;
+          this.spawnEnemy(minionKind, sx, sy, dropTop);
           const shouldSpawnPair =
             this.difficulty === 'hard' ||
             this.players.length === 2 ||
@@ -2233,9 +2623,15 @@ export class GameEngine {
           if (shouldSpawnPair && this.enemies.filter((x) => !x.dead).length < effectiveCap) {
             const secondKind: EnemyKind = e.kind === 'boss_director' ? 'drone' : minionKind;
             const sx2 = dropTop ? 70 + Math.random() * (VIRTUAL_W - 140) : this.camX + 24;
-            this.spawnEnemy(secondKind, sx2, 175 + Math.random() * 62, dropTop);
+            const sy2 = isFlight ? 84 + Math.random() * 100 : 175 + Math.random() * 62;
+            this.spawnEnemy(secondKind, sx2, sy2, dropTop);
           }
-          this.addFloatingText(e.x, e.y - 62, dropTop ? 'ДЕСАНТ СВЕРХУ!' : 'ПОДМОГА!', '#FF2A85');
+          this.addFloatingText(
+            e.x,
+            e.y - 62,
+            dropTop ? 'ДЕСАНТ СВЕРХУ!' : isFlight ? 'ВЕРТОЛЁТЫ!' : 'ПОДМОГА!',
+            isFlight ? '#38BDF8' : '#FF2A85'
+          );
         }
         break;
       }
@@ -2289,7 +2685,18 @@ export class GameEngine {
       e.x += knockbackX * 0.16;
     }
 
-    this.spawnParticles(e.x, e.y, 20, e.isBoss ? '#FF2A85' : '#39FF14', isHeavy ? 10 : 5, isHeavy ? 105 : 70);
+    this.spawnParticles(
+      e.x,
+      e.y,
+      20,
+      e.kind === 'boss_substation' || e.kind === 'boss_electrician'
+        ? '#38BDF8'
+        : e.isBoss
+          ? '#FF2A85'
+          : '#39FF14',
+      isHeavy ? 10 : 5,
+      isHeavy ? 105 : 70
+    );
     soundEngine.playHit(isHeavy);
     if (isHeavy) {
       this.hitstopTimer = 0.04;
@@ -2315,6 +2722,28 @@ export class GameEngine {
     this.addFloatingText(e.x, e.y - 38, `+${e.scoreValue}`, '#FACC15');
 
     if (e.isBoss) {
+      // Stage 3 Post-Boss Objective: after Crazy Electrician falls, shoot the power substation until it explodes!
+      if (e.kind === 'boss_electrician') {
+        for (const other of this.enemies) {
+          if (other.id !== e.id) other.dead = true;
+        }
+        for (const pr of this.projectiles) {
+          if (!pr.fromPlayer) pr.dead = true;
+        }
+        this.pendingSpawns = [];
+        this.zones = this.zones.filter((z) => z.fromPlayer);
+        this.spawnParticles(e.x, e.y, 18, '#38BDF8', 32, 155);
+        this.spawnParticles(e.x, e.y, 22, '#FEF08A', 22, 130);
+        this.hitstopTimer = 0.065;
+        this.triggerShake(7.5, 0.45);
+        soundEngine.playExplosion();
+        this.queueSfx('explosion');
+        this.spawnEnemy('boss_substation', this.camX + VIRTUAL_W - 56, 184, false);
+        this.showAnnouncement('ЭЛЕКТРИК ПОВЕРЖЕН! РАССТРЕЛЯЙ ПОДСТАНЦИЮ!', 3.6);
+        this.emitHud();
+        return;
+      }
+
       this.bossDefeated = true;
       this.bossDeathX = e.x;
       this.bossDeathY = e.y;
@@ -2326,7 +2755,12 @@ export class GameEngine {
       soundEngine.playStageClear();
       this.queueSfx('explosion');
       this.queueSfx('stage_clear');
-      this.showAnnouncement(`${this.level.bossName} ПОВЕРЖЕН!`, 2.2);
+      this.showAnnouncement(
+        e.kind === 'boss_substation'
+          ? 'ПОДСТАНЦИЯ ВЗОРВАНА! ЗАБОР ОБЕСТОЧЕН!'
+          : `${this.level.bossName} ПОВЕРЖЕН!`,
+        2.4
+      );
       // Defer array wipe until end of current phase so active loops NEVER crash!
       this.clearArenaPending = true;
       this.emitHud();
@@ -2338,7 +2772,7 @@ export class GameEngine {
     const minHp = alivePlayers.length > 0 ? Math.min(...alivePlayers.map((p) => p.hpSegments)) : 3;
     const coopBeerBonus = this.players.length === 2 ? 0.06 : 0;
     const beerChance = (minHp <= 1 ? 0.34 : minHp === 2 ? 0.22 : 0.12) + coopBeerBonus;
-    const weaponChance = 0.21;
+    const weaponChance = this.level.mode === 'flight' ? 0 : 0.105;
 
     const roll = Math.random();
     if (roll < beerChance) {
@@ -2449,12 +2883,11 @@ export class GameEngine {
         const enemySnapshot = [...this.enemies];
         for (const e of enemySnapshot) {
           if (e.hacked || e.dead || (e.dropping && e.z > 75) || pr.hitIds.has(e.id)) continue;
-          const hitW = e.kind === 'boss_caravan' ? 58 : e.isBoss ? 36 : e.kind === 'beer_truck' ? 34 : 18;
-          const hitH = e.isBoss ? 32 : 20;
-          if (Math.abs(pr.x - e.x) < hitW + pr.radius && Math.abs(pr.y - e.y) < hitH + pr.radius) {
+          const { hitW, hitH, targetY } = this.getEnemyHitbox(e);
+          if (Math.abs(pr.x - e.x) < hitW + pr.radius && Math.abs(pr.y - targetY) < hitH + pr.radius) {
             pr.hitIds.add(e.id);
             if (pr.explosiveRadius > 0 || pr.smokeCloud) {
-              this.detonateProjectile(pr);
+              this.detonateProjectile(pr, e.id);
               remove = true;
               break;
             } else {
@@ -2512,7 +2945,43 @@ export class GameEngine {
     }
   }
 
-  private detonateProjectile(pr: SimProjectile): void {
+  private getEnemyHitbox(e: SimEnemy): { hitW: number; hitH: number; targetY: number } {
+    const hitW =
+      e.kind === 'boss_caravan'
+        ? 58
+        : e.kind === 'boss_substation'
+          ? 46
+          : e.kind === 'boss_electrician'
+            ? 34
+            : e.isBoss
+              ? 36
+              : e.kind === 'beer_truck'
+                ? 34
+                : e.kind === 'heavy_heli'
+                  ? 28
+                  : e.kind === 'mini_heli'
+                    ? 22
+                    : 18;
+    const hitH =
+      e.kind === 'boss_substation'
+        ? 72
+        : e.kind === 'boss_electrician'
+          ? 46
+          : e.isBoss
+            ? 32
+            : e.kind === 'heavy_heli'
+              ? 22
+              : 20;
+    const targetY =
+      e.kind === 'boss_electrician'
+        ? e.y - 34
+        : e.kind === 'boss_substation'
+          ? e.y - 14
+          : e.y;
+    return { hitW, hitH, targetY };
+  }
+
+  private detonateProjectile(pr: SimProjectile, directHitEnemyId?: number): void {
     if (pr.smokeCloud) {
       this.zones.push({
         kind: 'smoke',
@@ -2536,7 +3005,10 @@ export class GameEngine {
       const snapshot = [...this.enemies];
       for (const e of snapshot) {
         if (e.hacked || e.dead) continue;
-        if (Math.hypot(e.x - pr.x, e.y - pr.y) <= pr.explosiveRadius) {
+        const { hitW, hitH, targetY } = this.getEnemyHitbox(e);
+        const dx = Math.max(0, Math.abs(pr.x - e.x) - hitW);
+        const dy = Math.max(0, Math.abs(pr.y - targetY) - hitH);
+        if (e.id === directHitEnemyId || Math.hypot(dx, dy) <= pr.explosiveRadius) {
           this.damageEnemy(e, pr.damage, pr.ownerSlot ?? 1, true, Math.sign(e.x - pr.x || 1) * 70, pr.stunDuration, 0, pr.hacksTech, true);
         }
       }
@@ -2560,8 +3032,14 @@ export class GameEngine {
           }
         } else {
           z.tickCd = 0.5;
+          const isFlightLightning = this.level.mode === 'flight' && z.kind === 'virus_beam';
           this.players.forEach((pl) => {
-            if (pl.alive && pl.z < 16 && Math.hypot(pl.x - z.x, pl.y - z.y) <= z.radius) {
+            if (!pl.alive) return;
+            if (isFlightLightning) {
+              if (Math.abs(pl.x - z.x) <= z.radius * 0.65) {
+                this.damagePlayer(pl, 1, 'МОЛНИЯ!');
+              }
+            } else if (pl.z < 16 && Math.hypot(pl.x - z.x, pl.y - z.y) <= z.radius) {
               this.damagePlayer(pl, 1);
             }
           });
@@ -2637,9 +3115,10 @@ export class GameEngine {
     const bossEntity = this.enemies.find((e) => e.isBoss && !e.dead);
     let boss: BossHudInfo | null = null;
     if (bossEntity) {
+      const isSubstation = bossEntity.kind === 'boss_substation';
       boss = {
-        name: this.level.bossName,
-        subtitle: this.level.bossSubtitle,
+        name: isSubstation ? 'ПОДСТАНЦИЯ ЗАБОРА' : this.level.bossName,
+        subtitle: isSubstation ? '10 000 ВОЛЬТ · СТРЕЛЯЙ, ЧТОБЫ ВЗОРВАТЬ!' : this.level.bossSubtitle,
         hp: Math.max(0, bossEntity.hp),
         maxHp: bossEntity.maxHp,
         phase: bossEntity.phase,
@@ -2673,8 +3152,8 @@ export class GameEngine {
           lives: p.lives,
           maxLives: 3,
           weaponId: p.weaponId,
-          weaponName: w.name,
-          isNativeWeapon: p.weaponId === hero.nativeWeaponId,
+          weaponName: this.level.mode === 'flight' ? 'ДРОН-ПУШКА + РАКЕТЫ' : w.name,
+          isNativeWeapon: this.level.mode === 'flight' ? true : p.weaponId === hero.nativeWeaponId,
           secondaryWeaponId: p.secondaryWeaponId,
           alive: p.alive,
           score: p.score,
@@ -2690,9 +3169,48 @@ export class GameEngine {
     this.callbacks.onHudUpdate(this.buildHudSnapshot());
   }
 
+  private buildNetHudSig(): string {
+    const bossEntity = this.enemies.find((e) => e.isBoss && !e.dead);
+    const bossSig = bossEntity ? `${Math.round(bossEntity.hp)}:${bossEntity.phase}` : '0';
+    const goFlag = !this.camLocked && !this.bossSpawned && this.level.mode === 'beatemup' ? 1 : 0;
+    const pSig = this.players
+      .map(
+        (p) =>
+          `${p.hpSegments}/${p.armorPips}/${p.lives}/${p.weaponId}/${p.secondaryWeaponId ?? ''}/${p.alive ? 1 : 0}/${p.score}/${Math.round(p.rampLevel * 10)}`
+      )
+      .join('|');
+    return `${this.level.id}|${this.getTotalScore()}|${this.continuesLeft}|${Math.round(this.elevatorFloor)}|${goFlag}|${this.checkpointReached ? 1 : 0}|${this.announcement ?? ''}|${bossSig}|${pSig}`;
+  }
+
   private buildNetFrame(): NetFramePayload {
-    const sfx = this.sfxQueue.splice(0, this.sfxQueue.length);
+    const sfx = this.sfxQueue.splice(0, 8);
+    const minVisX = this.camX - 72;
+    const maxVisX = this.camX + VIRTUAL_W + 72;
+
+    const hudSig = this.buildNetHudSig();
+    const shouldIncludeHud =
+      hudSig !== this.lastNetHudSig || this.simTime - this.lastNetHudTime >= 0.65;
+    if (shouldIncludeHud) {
+      this.lastNetHudSig = hudSig;
+      this.lastNetHudTime = this.simTime;
+    }
+
+    const shouldSendMusic =
+      this.currentMusicTrack !== this.lastSentMusicTrack || this.netFrameSeq < 3;
+    if (shouldSendMusic) {
+      this.lastSentMusicTrack = this.currentMusicTrack;
+    }
+
+    const visibleParticles = this.particles.filter((pt) => pt.x >= minVisX && pt.x <= maxVisX);
+    const particleSlice = visibleParticles.slice(-24);
+
+    const visibleProjectiles = this.projectiles.filter(
+      (pr) => !pr.dead && pr.x >= minVisX && pr.x <= maxVisX
+    );
+    const projectileSlice = visibleProjectiles.slice(-40);
+
     return {
+      seq: ++this.netFrameSeq,
       levelId: this.level.id,
       camX: Math.round(this.camX * 10) / 10,
       simTime: Math.round(this.simTime * 100) / 100,
@@ -2719,65 +3237,70 @@ export class GameEngine {
         alive: p.alive,
       })),
       enemies: this.enemies
-        .filter((e) => !e.dead)
+        .filter((e) => !e.dead && e.x >= minVisX && e.x <= maxVisX)
         .map((e) => ({
           id: e.id,
           kind: e.kind,
-          x: Math.round(e.x * 10) / 10,
-          y: Math.round(e.y * 10) / 10,
-          z: Math.round(e.z * 10) / 10,
+          x: Math.round(e.x),
+          y: Math.round(e.y),
+          z: Math.round(e.z),
           facing: e.facing,
-          animTime: Math.round(e.animTime * 100) / 100,
-          hurtTimer: Math.round(e.hurtTimer * 100) / 100,
-          stunTimer: Math.round(e.stunTimer * 100) / 100,
-          burnTimer: Math.round(e.burnTimer * 100) / 100,
+          animTime: Math.round(e.animTime * 20) / 20,
+          hurtTimer: Math.round(e.hurtTimer * 20) / 20,
+          stunTimer: Math.round(e.stunTimer * 20) / 20,
+          burnTimer: Math.round(e.burnTimer * 20) / 20,
           hacked: e.hacked,
-          telegraphTimer: Math.round(e.telegraphTimer * 100) / 100,
-          hpRatio: Math.round((e.hp / e.maxHp) * 100) / 100,
+          telegraphTimer: Math.round(e.telegraphTimer * 20) / 20,
+          hpRatio: Math.round((e.hp / e.maxHp) * 50) / 50,
           phase: e.phase,
         })),
-      projectiles: this.projectiles
-        .filter((pr) => !pr.dead)
-        .map((pr) => ({
-          x: Math.round(pr.x),
-          y: Math.round(pr.y),
-          z: Math.round(pr.z),
-          vx: Math.round(pr.vx),
-          vy: Math.round(pr.vy),
-          color: pr.color,
-          glowColor: pr.glowColor,
-          radius: pr.radius,
-          weaponId: pr.weaponId,
-          isEnemyBarrel: pr.isEnemyBarrel,
+      projectiles: projectileSlice.map((pr) => ({
+        x: Math.round(pr.x),
+        y: Math.round(pr.y),
+        z: Math.round(pr.z),
+        vx: Math.round(pr.vx),
+        vy: Math.round(pr.vy),
+        color: pr.color,
+        glowColor: pr.glowColor,
+        radius: pr.radius,
+        weaponId: pr.weaponId,
+        isEnemyBarrel: pr.isEnemyBarrel,
+      })),
+      zones: this.zones
+        .filter((z) => z.x >= minVisX && z.x <= maxVisX)
+        .map((z) => ({
+          kind: z.kind,
+          x: Math.round(z.x),
+          y: Math.round(z.y),
+          radius: z.radius,
+          timer: Math.round(z.timer * 10) / 10,
         })),
-      zones: this.zones.map((z) => ({
-        kind: z.kind,
-        x: Math.round(z.x),
-        y: Math.round(z.y),
-        radius: z.radius,
-        timer: Math.round(z.timer * 10) / 10,
-      })),
-      pickups: this.pickups.map((pk) => ({
-        kind: pk.kind,
-        x: Math.round(pk.x),
-        y: Math.round(pk.y),
-        weaponId: pk.weaponId,
-      })),
-      particles: this.particles.slice(-90).map((pt) => ({
+      pickups: this.pickups
+        .filter((pk) => pk.x >= minVisX && pk.x <= maxVisX)
+        .map((pk) => ({
+          kind: pk.kind,
+          x: Math.round(pk.x),
+          y: Math.round(pk.y),
+          weaponId: pk.weaponId,
+        })),
+      particles: particleSlice.map((pt) => ({
         x: Math.round(pt.x),
         y: Math.round(pt.y),
         z: Math.round(pt.z),
         size: pt.size,
         color: pt.color,
       })),
-      texts: this.texts.map((ft) => ({
-        x: Math.round(ft.x),
-        y: Math.round(ft.y),
-        text: ft.text,
-        color: ft.color,
-      })),
-      hud: this.buildHudSnapshot(),
-      musicTrack: this.currentMusicTrack,
+      texts: this.texts
+        .filter((ft) => ft.x >= minVisX && ft.x <= maxVisX)
+        .slice(-10)
+        .map((ft) => ({
+          x: Math.round(ft.x),
+          y: Math.round(ft.y),
+          text: ft.text,
+          color: ft.color,
+        })),
+      hud: shouldIncludeHud ? this.buildHudSnapshot() : undefined,
+      musicTrack: shouldSendMusic ? this.currentMusicTrack : undefined,
       sfx: sfx.length > 0 ? sfx : undefined,
     };
   }
@@ -2788,6 +3311,13 @@ export class GameEngine {
     ctx.scale(this.renderScale, this.renderScale);
 
     const rf = this.onlineMode === 'guest' ? this.remoteFrame : null;
+    const prevRf =
+      this.onlineMode === 'guest' &&
+      this.prevRemoteFrame &&
+      rf &&
+      this.prevRemoteFrame.levelId === rf.levelId
+        ? this.prevRemoteFrame
+        : null;
     if (this.onlineMode === 'guest' && !rf) {
       drawLevelBackground(ctx, this.level, 0, this.simTime, 1);
       ctx.fillStyle = 'rgba(9,12,17,0.72)';
@@ -2801,9 +3331,21 @@ export class GameEngine {
       return;
     }
 
+    // Smooth 60 FPS client-side interpolation between 22 Hz host snapshots on Guest!
+    const guestElapsedMs = rf ? Math.max(0, performance.now() - this.remoteFrameAt) : 0;
+    const guestLerpT = prevRf
+      ? Math.max(0, Math.min(1, guestElapsedMs / Math.max(24, this.remoteFrameInterval)))
+      : 1;
+    const guestExtrapSec = rf ? Math.min(0.055, guestElapsedMs / 1000) : 0;
+
     const activeLevel = rf ? LEVEL_MAP[rf.levelId] : this.level;
-    const camX = rf ? rf.camX : this.camX;
-    const simTime = rf ? rf.simTime : this.simTime;
+    const camX =
+      rf && prevRf && Math.abs(rf.camX - prevRf.camX) < 120
+        ? prevRf.camX + (rf.camX - prevRf.camX) * guestLerpT
+        : rf
+          ? rf.camX
+          : this.camX;
+    const simTime = rf ? rf.simTime + guestExtrapSec : this.simTime;
     const elevatorFloor = rf ? rf.elevatorFloor : Math.round(this.elevatorFloor);
     const shakeIntensity = rf ? rf.shakeIntensity : this.shakeIntensity;
     const shakeTime = rf ? rf.shakeTime : this.shakeTime;
@@ -2814,7 +3356,12 @@ export class GameEngine {
       ctx.translate(Math.round(sx), Math.round(sy));
     }
 
-    drawLevelBackground(ctx, activeLevel, camX, simTime, elevatorFloor);
+    const renderEnemies = rf ? rf.enemies : this.enemies.filter((e) => !e.dead);
+    const hasLiveSubstation = renderEnemies.some((e) => e.kind === 'boss_substation');
+    drawLevelBackground(ctx, activeLevel, camX, simTime, elevatorFloor, {
+      substationLive: hasLiveSubstation,
+      substationDestroyed: !rf ? this.bossDefeated : false,
+    });
 
     const camY = getCameraOffsetY(activeLevel.id, camX);
     const elevAt = (wx: number) => getGroundElevation(activeLevel.id, wx) - camY;
@@ -2841,6 +3388,22 @@ export class GameEngine {
         ctx.strokeStyle = `rgba(57, 255, 20, ${0.88 * alpha})`;
         ctx.lineWidth = 1.5;
         ctx.stroke();
+      } else if (activeLevel.mode === 'flight') {
+        // High-voltage lightning pillar from the Crazy Electrician!
+        ctx.fillStyle = `rgba(56, 189, 248, ${0.28 * alpha})`;
+        ctx.fillRect(sx - z.radius * 0.55, 0, z.radius * 1.1, sy);
+        ctx.strokeStyle = `rgba(254, 240, 138, ${0.95 * alpha})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(sx, 0);
+        for (let ly = 18; ly <= sy; ly += 18) {
+          const jag = Math.sin(simTime * 42 + ly * 0.3) * 8;
+          ctx.lineTo(sx + jag, ly);
+        }
+        ctx.stroke();
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.85 * alpha})`;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
       } else {
         ctx.fillStyle = `rgba(57, 255, 20, ${0.3 * alpha})`;
         ctx.fillRect(sx - z.radius * 0.65, 0, z.radius * 1.3, sy);
@@ -2854,12 +3417,25 @@ export class GameEngine {
       }
     }
 
+    const prevEnemyMap = prevRf ? new Map(prevRf.enemies.map((pe) => [pe.id, pe])) : null;
+    const prevPlayerMap = prevRf ? new Map(prevRf.players.map((pp) => [pp.slot, pp])) : null;
+
     // Draw landing reticles for enemies dropping from elevator shaft ceiling!
-    const renderEnemies = rf ? rf.enemies : this.enemies.filter((e) => !e.dead);
     for (const e of renderEnemies) {
-      if (e.z > 32 && e.kind !== 'drone') {
-        const sx = Math.round(e.x - camX);
-        const sy = Math.round(e.y + elevAt(e.x));
+      const pe = prevEnemyMap?.get(e.id);
+      const ex = pe && Math.abs(e.x - pe.x) < 90 ? pe.x + (e.x - pe.x) * guestLerpT : e.x;
+      const ey = pe && Math.abs(e.y - pe.y) < 90 ? pe.y + (e.y - pe.y) * guestLerpT : e.y;
+      const ez = pe && Math.abs(e.z - pe.z) < 90 ? pe.z + (e.z - pe.z) * guestLerpT : e.z;
+      if (
+        ez > 32 &&
+        e.kind !== 'drone' &&
+        e.kind !== 'mini_heli' &&
+        e.kind !== 'heavy_heli' &&
+        e.kind !== 'boss_electrician' &&
+        e.kind !== 'boss_substation'
+      ) {
+        const sx = Math.round(ex - camX);
+        const sy = Math.round(ey + elevAt(ex));
         const pulse = 0.55 + Math.sin(simTime * 18) * 0.35;
         const rad = e.kind.startsWith('boss_') ? 26 : 13;
         ctx.strokeStyle = `rgba(255, 42, 133, ${pulse})`;
@@ -2906,32 +3482,43 @@ export class GameEngine {
 
     for (const p of renderPlayers) {
       if (!p.alive) continue;
-      const pElev = elevAt(p.x);
-      const bikePitch = activeLevel.mode === 'highway' ? getGroundSlope(activeLevel.id, p.x) : 0;
+      const pp = prevPlayerMap?.get(p.slot);
+      const pxPos = pp && Math.abs(p.x - pp.x) < 90 ? pp.x + (p.x - pp.x) * guestLerpT : p.x;
+      const pyPos = pp && Math.abs(p.y - pp.y) < 90 ? pp.y + (p.y - pp.y) * guestLerpT : p.y;
+      const pzPos = pp && Math.abs(p.z - pp.z) < 90 ? pp.z + (p.z - pp.z) * guestLerpT : p.z;
+      const pElev = elevAt(pxPos);
+      const bikePitch = activeLevel.mode === 'highway' ? getGroundSlope(activeLevel.id, pxPos) : 0;
       const isThrottling =
         activeLevel.mode === 'highway' &&
         p.moving &&
-        ('vx' in p && typeof p.vx === 'number' ? p.vx > 8 : true);
+        ('vx' in p && typeof p.vx === 'number' ? p.vx > 8 : pp ? p.x - pp.x > 0.4 : true);
+      const isFlightMode = activeLevel.mode === 'flight';
+      const rawVx = 'vx' in p && typeof p.vx === 'number' ? p.vx : pp ? (p.x - pp.x) * 35 : 0;
+      const quadTilt = isFlightMode
+        ? Math.max(-0.18, Math.min(0.2, rawVx * p.facing * 0.0012))
+        : 0;
       items.push({
-        y: p.y,
+        y: pyPos,
         draw: () =>
           drawHeroSprite(ctx, {
             heroId: p.heroId,
-            x: p.x - camX,
-            y: p.y + pElev,
-            z: p.z,
+            x: pxPos - camX,
+            y: pyPos + pElev,
+            z: pzPos,
             vz: p.vz,
             facing: activeLevel.mode === 'highway' ? 1 : p.facing,
             aimX: p.aimX,
             aimY: p.aimY,
-            animTime: p.animTime,
-            moving: p.moving || activeLevel.mode === 'highway',
+            animTime: rf ? p.animTime + guestExtrapSec : p.animTime,
+            moving: p.moving || activeLevel.mode === 'highway' || isFlightMode,
             meleeTimer: p.meleeTimer,
             shootTimer: p.shootTimer,
             hurtTimer: p.hurtTimer,
             invulnTimer: p.invulnTimer,
             weaponId: p.weaponId as WeaponId,
             onBike: activeLevel.mode === 'highway',
+            onQuadcopter: isFlightMode,
+            quadTilt,
             bikePitch,
             throttling: isThrottling,
             playerSlot: p.slot,
@@ -2940,17 +3527,21 @@ export class GameEngine {
     }
 
     for (const e of renderEnemies) {
-      const eElev = elevAt(e.x);
+      const pe = prevEnemyMap?.get(e.id);
+      const ex = pe && Math.abs(e.x - pe.x) < 90 ? pe.x + (e.x - pe.x) * guestLerpT : e.x;
+      const ey = pe && Math.abs(e.y - pe.y) < 90 ? pe.y + (e.y - pe.y) * guestLerpT : e.y;
+      const ez = pe && Math.abs(e.z - pe.z) < 90 ? pe.z + (e.z - pe.z) * guestLerpT : e.z;
+      const eElev = elevAt(ex);
       items.push({
-        y: e.y,
+        y: ey,
         draw: () =>
           drawEnemySprite(ctx, {
             kind: e.kind as EnemyKind,
-            x: e.x - camX,
-            y: e.y + eElev,
-            z: e.z,
+            x: ex - camX,
+            y: ey + eElev,
+            z: ez,
             facing: e.facing,
-            animTime: e.animTime,
+            animTime: rf ? e.animTime + guestExtrapSec : e.animTime,
             hurtTimer: e.hurtTimer,
             stunTimer: e.stunTimer,
             burnTimer: e.burnTimer,
@@ -2968,8 +3559,10 @@ export class GameEngine {
 
     const renderProjectiles = rf ? rf.projectiles : this.projectiles.filter((pr) => !pr.dead);
     for (const pr of renderProjectiles) {
-      const sx = Math.round(pr.x - camX);
-      const sy = Math.round(pr.y + elevAt(pr.x) - pr.z);
+      const prX = rf ? pr.x + pr.vx * guestExtrapSec : pr.x;
+      const prY = rf ? pr.y + pr.vy * guestExtrapSec : pr.y;
+      const sx = Math.round(prX - camX);
+      const sy = Math.round(prY + elevAt(prX) - pr.z);
       if (pr.isEnemyBarrel) {
         ctx.fillStyle = '#07090E';
         ctx.fillRect(sx - 8, sy - 8, 16, 16);

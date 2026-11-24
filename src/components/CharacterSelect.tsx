@@ -281,7 +281,8 @@ export function CharacterSelect({
               width={88}
               height={94}
               scale={1.48}
-              onBike={startLevel === 4}
+              onBike={startLevel === 5}
+              onQuadcopter={startLevel === 3}
             />
           </div>
 

@@ -10,6 +10,7 @@ import {
 } from './types';
 
 export interface NetFramePayload {
+  seq?: number;
   levelId: LevelId;
   camX: number;
   simTime: number;
@@ -89,7 +90,7 @@ export interface NetFramePayload {
     text: string;
     color: string;
   }>;
-  hud: unknown;
+  hud?: unknown;
   musicTrack?: string;
   sfx?: Array<{ type: string; a?: string | number | boolean; b?: boolean; c?: number }>;
 }
@@ -524,11 +525,21 @@ class OnlineClient {
     this.send({ type: 'game:phase', ...payload });
   }
 
-  public sendInput(input: RemoteInputState): void {
+  public canSendFrame(): boolean {
+    return Boolean(this.ws && this.ws.readyState === WebSocket.OPEN && this.ws.bufferedAmount < 16384);
+  }
+
+  public sendInput(input: RemoteInputState, urgent = false): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    // Drop non-urgent periodic movement heartbeats if outbound socket is temporarily backed up
+    if (!urgent && this.ws.bufferedAmount > 8192) return;
     this.send({ type: 'game:input', input });
   }
 
   public sendFrame(frame: NetFramePayload): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    // Never pile up stale visual snapshots into the TCP send buffer
+    if (this.ws.bufferedAmount > 24576) return;
     this.send({ type: 'game:frame', frame });
   }
 

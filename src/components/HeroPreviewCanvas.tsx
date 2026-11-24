@@ -9,6 +9,7 @@ interface HeroPreviewCanvasProps {
   height?: number;
   scale?: number;
   onBike?: boolean;
+  onQuadcopter?: boolean;
   animated?: boolean;
   className?: string;
 }
@@ -19,6 +20,7 @@ export function HeroPreviewCanvas({
   height = 96,
   scale = 1.6,
   onBike = false,
+  onQuadcopter = false,
   animated = true,
   className = '',
 }: HeroPreviewCanvasProps) {
@@ -60,7 +62,8 @@ export function HeroPreviewCanvas({
         invulnTimer: 0,
         weaponId: hero.nativeWeaponId,
         onBike,
-        scale,
+        onQuadcopter,
+        scale: onQuadcopter ? scale * 0.86 : scale,
       });
       ctx.restore();
       if (animated) {
@@ -72,7 +75,7 @@ export function HeroPreviewCanvas({
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [heroId, width, height, scale, onBike, animated]);
+  }, [heroId, width, height, scale, onBike, onQuadcopter, animated]);
 
   return (
     <canvas

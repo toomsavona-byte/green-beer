@@ -284,7 +284,7 @@ export default function App() {
               setContinuesLeft(summary.continuesLeft);
               const saved = saveProgress({
                 highScore: summary.score,
-                unlockedLevel: Math.min(6, summary.levelId + 1) as LevelId,
+                unlockedLevel: Math.min(7, summary.levelId + 1) as LevelId,
               });
               setHighScore(saved.highScore);
               if (onlineMode === 'host') {
@@ -334,10 +334,12 @@ export default function App() {
                     onlineClient.sendFrame(frame);
                   }
                 : undefined,
+            canSendNetFrame:
+              onlineMode === 'host' ? () => onlineClient.canSendFrame() : undefined,
             onLocalGuestInput:
               onlineMode === 'guest'
-                ? (input) => {
-                    onlineClient.sendInput(input);
+                ? (input, urgent) => {
+                    onlineClient.sendInput(input, urgent);
                   }
                 : undefined,
           },
@@ -663,7 +665,7 @@ export default function App() {
   }, [onlineRole, currentLevel, carryScore]);
 
   const handleNextStage = useCallback(() => {
-    if (currentLevel < 6) {
+    if (currentLevel < 7) {
       const nextLvl = (currentLevel + 1) as LevelId;
       setCurrentLevel(nextLvl);
       setIsVictoryCutscene(false);

@@ -426,16 +426,21 @@ export function GameModals({
   }
 
   if (screen === 'STAGE_CLEAR' && stageSummary) {
+    const isFinalStage = stageSummary.levelId >= 7;
     return (
       <div className="fixed inset-0 z-30 bg-[#090C11]/88 flex items-center justify-center p-4">
         <div className="w-full max-w-lg bg-[#121822] border-2 border-[#39FF14] p-6 flex flex-col gap-4">
           <div className="text-center">
-            <div className="font-mono-num text-xs text-[#FFB000]">УРОВЕНЬ ПРОЙДЕН</div>
+            <div className="font-mono-num text-xs text-[#FFB000]">
+              {isFinalStage ? 'ИГРА ПРОЙДЕНА · ПОБЕДА!' : 'УРОВЕНЬ ПРОЙДЕН'}
+            </div>
             <h2 className="font-display font-bold text-3xl text-[#39FF14] tracking-wider mt-1">
-              STAGE {stageSummary.levelId} CLEAR!
+              {isFinalStage ? 'ФИНАЛ ПРОЙДЕН!' : `STAGE ${stageSummary.levelId} CLEAR!`}
             </h2>
             <p className="text-sm text-[#CBD5E1] mt-1">
-              Босс «{stageSummary.bossName}» повержен.
+              {stageSummary.levelId === 3
+                ? 'Электрик повержен, подстанция взорвана — забор завода обесточен!'
+                : `Босс «${stageSummary.bossName}» повержен.`}
             </p>
           </div>
 
@@ -456,7 +461,9 @@ export function GameModals({
 
           {isOnlineGuest ? (
             <div className="w-full py-3 bg-[#090C11] border border-[#00E5FF] text-center text-[#00E5FF] font-mono-num text-xs">
-              ОЖИДАНИЕ ПЕРЕХОДА ХОСТА НА СЛЕДУЮЩИЙ ЭТАП...
+              {isFinalStage
+                ? 'ОЖИДАНИЕ ЗАПУСКА ФИНАЛЬНОЙ ЗАСТАВКИ ХОСТОМ...'
+                : 'ОЖИДАНИЕ ПЕРЕХОДА ХОСТА НА СЛЕДУЮЩИЙ ЭТАП...'}
             </div>
           ) : (
             <button
@@ -464,7 +471,7 @@ export function GameModals({
               onClick={onNextStage}
               className={`w-full py-3 bg-[#39FF14] text-[#090C11] font-display font-bold text-base tracking-widest cursor-pointer ${focusRing('next')}`}
             >
-              {stageSummary.levelId < 6 ? 'СЛЕДУЮЩИЙ УРОВЕНЬ ->' : 'СМОТРЕТЬ ФИНАЛ ->'}
+              {isFinalStage ? 'СМОТРЕТЬ ФИНАЛ ->' : 'СЛЕДУЮЩИЙ УРОВЕНЬ ->'}
             </button>
           )}
         </div>

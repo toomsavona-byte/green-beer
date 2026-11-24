@@ -60,6 +60,7 @@ type FocusItemId =
   | 'lvl_4'
   | 'lvl_5'
   | 'lvl_6'
+  | 'lvl_7'
   | 'leaderboard'
   | 'fullscreen'
   | 'mute';
@@ -112,7 +113,7 @@ export function TitleScreen({
     if (branch === 'settings') {
       return [
         ['controls', 'touch', 'ff', 'crt'],
-        ['lvl_1', 'lvl_2', 'lvl_3', 'lvl_4', 'lvl_5', 'lvl_6'],
+        ['lvl_1', 'lvl_2', 'lvl_3', 'lvl_4', 'lvl_5', 'lvl_6', 'lvl_7'],
         ['back'],
         topUtilityRow,
       ];
@@ -252,7 +253,8 @@ export function TitleScreen({
       case 'lvl_3':
       case 'lvl_4':
       case 'lvl_5':
-      case 'lvl_6': {
+      case 'lvl_6':
+      case 'lvl_7': {
         soundEngine.playMenuMove();
         const lvl = Number(id.slice(4)) as LevelId;
         onUpdateSettings({ startLevel: lvl });
@@ -733,7 +735,7 @@ export function TitleScreen({
                 </button>
               </div>
 
-              {/* Start Level Select (1–6 only; Finale level hidden!) */}
+              {/* Start Level Select (1–7 playable stages; ending cutscene remains hidden!) */}
               <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-[#1E293B]">
                 <span className="text-[11px] sm:text-xs text-[#94A3B8] mr-0.5 font-mono-num">
                   СТАРТОВЫЙ УРОВЕНЬ:

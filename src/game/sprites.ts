@@ -227,6 +227,8 @@ export interface HeroRenderOpts {
   onBike: boolean;
   bikePitch?: number;
   throttling?: boolean;
+  onQuadcopter?: boolean;
+  quadTilt?: number;
   playerSlot?: 1 | 2;
   scale?: number;
 }
@@ -495,19 +497,28 @@ export function drawHeroSprite(ctx: CanvasRenderingContext2D, o: HeroRenderOpts)
   ctx.save();
   ctx.translate(o.x, o.y);
 
-  // Soft layered ground shadow
-  const shadowScale = Math.max(0.42, 1 - o.z / 95);
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.52)';
-  ctx.beginPath();
-  ctx.ellipse(0, 2, (o.onBike ? 27 : 13.5 * prof.bodyScaleX) * shadowScale * scale, 4.4 * shadowScale * scale, 0, 0, Math.PI * 2);
-  ctx.fill();
+  // Soft layered ground shadow (skipped in high-altitude flight mode; replaced by aerial halo)
+  if (!o.onQuadcopter) {
+    const shadowScale = Math.max(0.42, 1 - o.z / 95);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.52)';
+    ctx.beginPath();
+    ctx.ellipse(0, 2, (o.onBike ? 27 : 13.5 * prof.bodyScaleX) * shadowScale * scale, 4.4 * shadowScale * scale, 0, 0, Math.PI * 2);
+    ctx.fill();
 
-  // P1 / P2 crisp arcade floor ring
-  if (o.playerSlot) {
-    ctx.strokeStyle = o.playerSlot === 1 ? 'rgba(57,255,20,0.78)' : 'rgba(0,229,255,0.82)';
+    // P1 / P2 crisp arcade floor ring
+    if (o.playerSlot) {
+      ctx.strokeStyle = o.playerSlot === 1 ? 'rgba(57,255,20,0.78)' : 'rgba(0,229,255,0.82)';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.ellipse(0, 2, (o.onBike ? 29 : 15 * prof.bodyScaleX) * scale, 5.2 * scale, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  } else if (o.playerSlot) {
+    // Crisp tactical P1 / P2 aerial tracking bracket around quadcopter
+    ctx.strokeStyle = o.playerSlot === 1 ? 'rgba(57,255,20,0.68)' : 'rgba(0,229,255,0.74)';
     ctx.lineWidth = 1.1;
     ctx.beginPath();
-    ctx.ellipse(0, 2, (o.onBike ? 29 : 15 * prof.bodyScaleX) * scale, 5.2 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, -14 * scale, 26 * scale, 6.5 * scale, 0, 0, Math.PI * 2);
     ctx.stroke();
   }
 
@@ -521,6 +532,12 @@ export function drawHeroSprite(ctx: CanvasRenderingContext2D, o: HeroRenderOpts)
 
   if (o.onBike) {
     drawHeroOnBike(ctx, o, prof, flash, c, hi, sh);
+    ctx.restore();
+    return;
+  }
+
+  if (o.onQuadcopter) {
+    drawHeroOnQuadcopter(ctx, o, prof, flash, c, hi, sh);
     ctx.restore();
     return;
   }
@@ -1719,34 +1736,227 @@ function drawHeroOnBike(
   drawTaperedLimb(ctx, 0.5, -31.5 + rumble, 5.8, -33.2 + rumble, 2.0, 1.7, prof.bareArms ? c(prof.skinColor) : c(prof.jacketColor), hi(prof.jacketColor), sh(prof.jacketColor), 1.0);
   drawInkEllipse(ctx, 6.0, -33.2 + rumble, 2.0, 1.8, 0, '#18181B', '#52525B', INK, 0.8);
 
-  // Rider head (proud upright/reclined cruiser stance)
-  drawInkEllipse(ctx, -9.5, -39.5 + rumble, 5.2, 5.6, -0.08, c(prof.skinColor), hi(prof.skinColor), sh(prof.skinColor), 1.2);
+  const aimingBack = o.aimX < -0.15;
+
+  // Rider head (proud upright/reclined cruiser stance; glances over shoulder when shooting backwards!)
+  drawInkEllipse(ctx, -9.5, -39.5 + rumble, 5.2, 5.6, aimingBack ? 0.08 : -0.08, c(prof.skinColor), hi(prof.skinColor), sh(prof.skinColor), 1.2);
   // Biker sunglasses glint on highway!
   if (o.heroId !== 'koren' && o.heroId !== 'bo') {
-    drawRoundedRect(ctx, -8.2, -41.2 + rumble, 5.2, 2.2, 0.6, '#0F172A', '#94A3B8', 0.6);
+    drawRoundedRect(ctx, aimingBack ? -14.2 : -8.2, -41.2 + rumble, 5.2, 2.2, 0.6, '#0F172A', '#94A3B8', 0.6);
   }
   if (o.heroId === 'zavod_killer') {
     drawRoundedPoly(ctx, [[-15.5, -41.5 + rumble], [-13.5, -46.5 + rumble], [-5.5, -45.5 + rumble], [-3.5, -40.5 + rumble]], '#FACC15', INK, 1.15);
   } else if (o.heroId === 'koren') {
-    drawRoundedRect(ctx, -11.5, -42 + rumble, 7, 3.2, 0.9, '#00E5FF', INK, 0.95);
+    drawRoundedRect(ctx, aimingBack ? -14.5 : -11.5, -42 + rumble, 7, 3.2, 0.9, '#00E5FF', INK, 0.95);
   } else if (o.heroId === 'hooper') {
     drawRoundedPoly(ctx, [[-18.5, -41.5 + rumble], [-13.5, -45.5 + rumble], [-5.5, -44.5 + rumble], [-4.5, -41.5 + rumble]], '#DC2626', INK, 1.0);
   } else if (o.heroId === 'bo') {
-    drawRoundedRect(ctx, -10.5, -41.5 + rumble, 6.2, 2.6, 0.6, '#0F172A', INK, 0.9);
+    drawRoundedRect(ctx, aimingBack ? -14.5 : -10.5, -41.5 + rumble, 6.2, 2.6, 0.6, '#0F172A', INK, 0.9);
     ctx.fillStyle = '#00E5FF';
-    ctx.fillRect(-9.3, -40.9 + rumble, 4.2, 1.4);
+    ctx.fillRect(aimingBack ? -13.5 : -9.3, -40.9 + rumble, 4.2, 1.4);
   } else {
     drawRoundedPoly(ctx, [[-15.5, -41.5 + rumble], [-14.5, -45.5 + rumble], [-5.5, -45.0 + rumble], [-4.5, -41.5 + rumble]], p.hair, INK, 1.05);
   }
 
-  // Right arm aiming mounted/handheld weapon forward!
-  const localAimX = o.aimX * o.facing;
-  const angle = Math.atan2(o.aimY, Math.max(0.25, localAimX));
-  ctx.save();
-  ctx.translate(-5, -28.5 + rumble);
-  ctx.rotate(angle);
-  drawWeaponInHand(ctx, o.weaponId, 4, -3, o.shootTimer > 0, safeTime);
+  // Right arm holding weapon — either forward or extended BACKWARDS over the rear fender while bike stays facing right!
+  const armCol = prof.bareArms ? c(prof.skinColor) : c(prof.jacketColor);
+  const armHi = hi(prof.bareArms ? prof.skinColor : prof.jacketColor);
+  const armSh = sh(prof.bareArms ? prof.skinColor : prof.jacketColor);
+  const recoil = o.shootTimer > 0 ? 1.8 : 0;
+
+  if (aimingBack) {
+    const rearAngle = Math.atan2(o.aimY, Math.max(0.2, -o.aimX));
+    ctx.save();
+    ctx.translate(-12.5, -28.8 + rumble);
+    ctx.scale(-1, 1); // Mirror ONLY the shooting arm & gun so weapon points LEFT right-side up!
+    ctx.rotate(rearAngle);
+    drawWeaponInHand(ctx, o.weaponId, 6.5 - recoil, -3.2, o.shootTimer > 0, safeTime);
+    drawTaperedLimb(ctx, -2.0, -1.0, 2.5 - recoil * 0.4, 0.6, 2.5, 2.1, c(prof.jacketColor), hi(prof.jacketColor), sh(prof.jacketColor), 1.0);
+    drawTaperedLimb(ctx, 2.5 - recoil * 0.4, 0.6, 8.2 - recoil, 0.2, 2.1, 1.7, armCol, armHi, armSh, 0.95);
+    drawInkEllipse(ctx, 8.6 - recoil, 0.2, 2.0, 1.8, 0, '#18181B', '#52525B', INK, 0.8);
+    ctx.restore();
+  } else {
+    const fwdAngle = Math.atan2(o.aimY, Math.max(0.2, o.aimX));
+    ctx.save();
+    ctx.translate(-6.5, -28.5 + rumble);
+    ctx.rotate(fwdAngle);
+    drawWeaponInHand(ctx, o.weaponId, 5.5 - recoil, -3.2, o.shootTimer > 0, safeTime);
+    drawTaperedLimb(ctx, -1.8, -1.2, 2.2 - recoil * 0.4, 0.8, 2.5, 2.1, c(prof.jacketColor), hi(prof.jacketColor), sh(prof.jacketColor), 1.0);
+    drawTaperedLimb(ctx, 2.2 - recoil * 0.4, 0.8, 7.2 - recoil, 0.3, 2.1, 1.7, armCol, armHi, armSh, 0.95);
+    drawInkEllipse(ctx, 7.6 - recoil, 0.3, 2.0, 1.8, 0, '#18181B', '#52525B', INK, 0.8);
+    ctx.restore();
+  }
+
   ctx.restore();
+  void flash;
+}
+
+function drawHeroOnQuadcopter(
+  ctx: CanvasRenderingContext2D,
+  o: HeroRenderOpts,
+  _prof: HeroStyleProfile,
+  flash: boolean,
+  c: (s: string) => string,
+  hi: (s: string) => string,
+  sh: (s: string) => string
+): void {
+  const hero = HERO_MAP[o.heroId];
+  const p = hero.palette;
+  const safeTime = Math.max(0, o.animTime);
+  const hoverBob = Math.sin(safeTime * 10.2) * 1.4;
+  const rotorSpin = Math.sin(safeTime * 66);
+  const rotorSpin2 = Math.cos(safeTime * 72);
+  const tilt = Math.max(-0.26, Math.min(0.26, o.quadTilt ?? 0));
+  const ledBlink = Math.floor(safeTime * 10) % 2 === 0;
+  const accentCol = o.playerSlot === 2 ? '#39FF14' : '#00E5FF';
+
+  ctx.save();
+  ctx.translate(0, hoverBob);
+  ctx.rotate(tilt);
+
+  // ── 1. DOWNWARD THRUSTER AIR-WASH & LANDING SKIDS ──
+  const jetPulse = 5.5 + Math.abs(Math.sin(safeTime * 38)) * 4.5;
+  for (const jx of [-14, 14]) {
+    ctx.fillStyle = o.playerSlot === 2 ? 'rgba(57, 255, 20, 0.26)' : 'rgba(0, 229, 255, 0.28)';
+    ctx.beginPath();
+    ctx.moveTo(jx - 4.2, -5);
+    ctx.lineTo(jx, -5 + jetPulse);
+    ctx.lineTo(jx + 4.2, -5);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Lightweight carbon-steel tubular landing skids
+  drawTaperedLimb(ctx, -10, -10, -13, -1.5, 1.3, 1.2, '#334155', '#94A3B8', INK, 0.9);
+  drawTaperedLimb(ctx, 10, -10, 13, -1.5, 1.3, 1.2, '#334155', '#94A3B8', INK, 0.9);
+  drawTaperedLimb(ctx, -17, -1.2, 17, -1.2, 1.4, 1.4, '#1E293B', '#64748B', INK, 1.0);
+
+  // ── 2. BACK PAIR OF QUADCOPTER ROTOR ARMS & HIGH-RPM SPINNING BLADES ──
+  const backRotors = [
+    { rx: -21, ry: -21, led: '#EF4444' },
+    { rx: 21, ry: -21, led: '#22C55E' },
+  ];
+  for (const r of backRotors) {
+    drawTaperedLimb(ctx, 0, -14, r.rx, r.ry + 3, 1.8, 1.4, '#1E293B', '#475569', INK, 1.0);
+    drawRoundedRect(ctx, r.rx - 2.6, r.ry - 0.5, 5.2, 4.8, 1.2, '#334155', INK, 0.9);
+    ctx.fillStyle = 'rgba(203, 213, 225, 0.36)';
+    ctx.beginPath();
+    ctx.ellipse(r.rx, r.ry - 1.5, 13.0, 2.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    const bw = 3.5 + Math.abs(rotorSpin) * 10.5;
+    ctx.strokeStyle = '#F8FAFC';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(r.rx - bw, r.ry - 1.5);
+    ctx.lineTo(r.rx + bw, r.ry - 1.5);
+    ctx.stroke();
+    px(ctx, r.rx - 1, r.ry + 2.5, 2, 1.6, r.led);
+  }
+
+  // ── 3. UNMANNED ARMORED COMBAT QUADCOPTER FUSELAGE (NO HUMAN PILOT!) ──
+  // Top telemetry antenna mast & RC signal receiver dome
+  drawTaperedLimb(ctx, -8, -19, -11, -28, 1.0, 0.7, '#475569', '#CBD5E1', INK, 0.8);
+  drawInkEllipse(ctx, -11, -28.5, 1.8, 1.8, 0, ledBlink ? '#39FF14' : '#0EA5E9', '#FFFFFF', INK, 0.6);
+  drawTaperedLimb(ctx, -4, -19, -5.5, -25, 0.9, 0.6, '#334155', '#94A3B8', INK, 0.75);
+
+  // Armored top sensor cowling & hero-colored fuselage shell
+  drawRoundedPoly(
+    ctx,
+    [
+      [-17, -12],
+      [-12, -20],
+      [11, -20],
+      [20, -14],
+      [17, -8.5],
+      [-14, -8.5],
+    ],
+    c(p.bikeMain),
+    INK,
+    1.3
+  );
+  // Metallic bevel highlight & carbon-fiber side intake
+  drawRoundedPoly(
+    ctx,
+    [
+      [-10, -18.8],
+      [9.5, -18.8],
+      [14, -15.5],
+      [-11, -15.5],
+    ],
+    hi(p.bikeMain),
+    'transparent',
+    0
+  );
+  drawRoundedRect(ctx, -12, -14.2, 17, 3.8, 1.0, sh(p.bikeMain), INK, 0.8);
+  px(ctx, -10, -13.1, 13, 1.6, accentCol);
+
+  // Forward armored optical targeting camera / LIDAR visor eye
+  drawRoundedPoly(
+    ctx,
+    [
+      [10, -17.5],
+      [18.5, -14.5],
+      [18.0, -11.0],
+      [10, -11.5],
+    ],
+    '#0B1221',
+    INK,
+    1.0
+  );
+  drawInkEllipse(ctx, 14.8, -14.0, 2.6, 2.0, 0, accentCol, '#FFFFFF', '#0369A1', 0.6);
+
+  // ── 4. UNDERSLUNG GIMBAL TWIN-BARREL PLASMA AUTOCANNON & MICRO-ROCKET POD ──
+  // Local +X is already facing direction because drawHeroSprite scales by o.facing!
+  const aimLocalX = o.aimX * o.facing;
+  const gimbalAngle = Math.atan2(o.aimY, Math.max(0.15, aimLocalX));
+  const recoil = o.shootTimer > 0 ? 2.2 : 0;
+
+  ctx.save();
+  ctx.translate(4, -7.8);
+  ctx.rotate(gimbalAngle);
+  // Armored turret swivel mount
+  drawInkEllipse(ctx, 0, 0, 4.4, 3.8, 0, '#1E293B', '#64748B', INK, 1.0);
+  // Side micro-rocket pod
+  drawRoundedRect(ctx, -2, -5.2, 8.5, 3.6, 0.9, '#334155', INK, 0.85);
+  px(ctx, 5.2, -4.4, 1.8, 2.0, '#F97316');
+  // Twin heavy plasma autocannon barrels
+  drawRoundedRect(ctx, 2 - recoil, -2.5, 13.5, 2.5, 0.7, '#475569', INK, 0.9);
+  drawRoundedRect(ctx, 1.5 - recoil, 0.2, 12.5, 2.4, 0.7, '#334155', INK, 0.9);
+  px(ctx, 10 - recoil, -1.8, 4, 1.0, accentCol);
+  px(ctx, 9.5 - recoil, 0.9, 3.5, 1.0, accentCol);
+
+  // Twin plasma muzzle flashes when shooting!
+  if (o.shootTimer > 0) {
+    drawInkEllipse(ctx, 17.5 - recoil, -1.2, 4.6, 2.3, 0, '#FEF08A', '#FFFFFF', accentCol, 0);
+    drawInkEllipse(ctx, 16.5 - recoil, 1.4, 4.2, 2.1, 0, accentCol, '#FFFFFF', '#0284C7', 0);
+  }
+  // Micro-rocket launch flare when firing secondary!
+  if (o.meleeTimer > 0.08) {
+    drawInkEllipse(ctx, 9.5, -3.4, 5.0, 3.2, 0, '#F97316', '#FEF08A', '#DC2626', 0);
+  }
+  ctx.restore();
+
+  // ── 5. FOREGROUND PAIR OF QUADCOPTER OUTRIGGER ROTORS ──
+  const frontRotors = [
+    { rx: -26, ry: -13.5, led: '#EF4444' },
+    { rx: 25, ry: -13.5, led: '#39FF14' },
+  ];
+  for (const r of frontRotors) {
+    drawTaperedLimb(ctx, r.rx > 0 ? 11 : -11, -12, r.rx, r.ry + 2.5, 1.7, 1.3, '#334155', '#94A3B8', INK, 0.95);
+    drawRoundedRect(ctx, r.rx - 2.7, r.ry - 0.5, 5.4, 4.6, 1.1, '#475569', INK, 0.9);
+    ctx.fillStyle = 'rgba(226, 232, 240, 0.46)';
+    ctx.beginPath();
+    ctx.ellipse(r.rx, r.ry - 1.4, 13.5, 2.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    const bw = 3.8 + Math.abs(rotorSpin2) * 10.8;
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(r.rx - bw, r.ry - 1.4);
+    ctx.lineTo(r.rx + bw, r.ry - 1.4);
+    ctx.stroke();
+    px(ctx, r.rx - 1.2, r.ry + 2.2, 2.4, 1.8, r.led);
+  }
 
   ctx.restore();
   void flash;
@@ -2044,29 +2254,65 @@ export function drawEnemySprite(ctx: CanvasRenderingContext2D, e: EnemyRenderOpt
   ctx.translate(e.x, e.y);
 
   const isBoss = e.kind.startsWith('boss_');
-  const shadowW = e.kind === 'boss_caravan' ? 62 : isBoss ? 34 : e.kind === 'beer_truck' ? 35 : 13;
-  ctx.fillStyle = 'rgba(0,0,0,0.56)';
-  ctx.beginPath();
-  ctx.ellipse(0, 2, shadowW, isBoss ? 9 : 4.6, 0, 0, Math.PI * 2);
-  ctx.fill();
+  const isAerialHeli = e.kind === 'mini_heli' || e.kind === 'heavy_heli';
+  const isElectrician = e.kind === 'boss_electrician';
+  const isSubstation = e.kind === 'boss_substation';
 
-  // Pulsing lethal danger telegraph ring!
-  if (e.telegraphTimer > 0) {
-    const blink = Math.floor(e.animTime * 24) % 2 === 0;
-    ctx.strokeStyle = blink ? '#FFB000' : '#FF2A85';
-    ctx.lineWidth = isBoss ? 2.6 : 2.0;
+  if (isElectrician) {
+    // Dynamic rooftop shadow directly underneath the spring-bouncing Crazy Electrician (rooftop at y = 232)
+    const roofDy = Math.max(0, 232 - e.y);
+    const shScale = Math.max(0.32, 1 - roofDy / 185);
+    ctx.fillStyle = 'rgba(0,0,0,0.52)';
     ctx.beginPath();
-    ctx.ellipse(0, 2, shadowW + 8, isBoss ? 12 : 7.5, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  }
+    ctx.ellipse(0, roofDy + 3, 24 * shScale, 6 * shScale, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (isSubstation) {
+    ctx.fillStyle = 'rgba(0,0,0,0.58)';
+    ctx.beginPath();
+    ctx.ellipse(0, 50, 38, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (!isAerialHeli) {
+    const shadowW = e.kind === 'boss_caravan' ? 62 : isBoss ? 34 : e.kind === 'beer_truck' ? 35 : 13;
+    ctx.fillStyle = 'rgba(0,0,0,0.56)';
+    ctx.beginPath();
+    ctx.ellipse(0, 2, shadowW, isBoss ? 9 : 4.6, 0, 0, Math.PI * 2);
+    ctx.fill();
 
-  // Allied hacked cyan ring
-  if (e.hacked) {
-    ctx.strokeStyle = '#00E5FF';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(0, 2, shadowW + 5, 7, 0, 0, Math.PI * 2);
-    ctx.stroke();
+    // Pulsing lethal danger telegraph ring!
+    if (e.telegraphTimer > 0) {
+      const blink = Math.floor(e.animTime * 24) % 2 === 0;
+      ctx.strokeStyle = blink ? '#FFB000' : '#FF2A85';
+      ctx.lineWidth = isBoss ? 2.6 : 2.0;
+      ctx.beginPath();
+      ctx.ellipse(0, 2, shadowW + 8, isBoss ? 12 : 7.5, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Allied hacked cyan ring
+    if (e.hacked) {
+      ctx.strokeStyle = '#00E5FF';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(0, 2, shadowW + 5, 7, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  } else {
+    // Aerial helicopter telegraph / hacked indicator ring centered around fuselage
+    if (e.telegraphTimer > 0) {
+      const blink = Math.floor(e.animTime * 24) % 2 === 0;
+      ctx.strokeStyle = blink ? '#FFB000' : '#FF2A85';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.ellipse(0, -14, e.kind === 'heavy_heli' ? 28 : 20, 14, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    if (e.hacked) {
+      ctx.strokeStyle = '#00E5FF';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.ellipse(0, -14, e.kind === 'heavy_heli' ? 26 : 18, 12, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 
   ctx.translate(0, -e.z);
@@ -3105,6 +3351,460 @@ export function drawEnemySprite(ctx: CanvasRenderingContext2D, e: EnemyRenderOpt
       }
       break;
     }
+
+    case 'mini_heli': {
+      // Compact hostile security mini-helicopter patrolling over city rooftops!
+      const bobH = Math.sin(t * 7.5) * 2.0;
+      const bladeW = 5 + Math.abs(Math.sin(t * 58)) * 17;
+      ctx.save();
+      ctx.translate(0, bobH);
+      ctx.rotate(0.08); // Aggressive forward nose pitch
+
+      // Tail boom + vertical tail fin + spinning tail rotor
+      drawTaperedLimb(ctx, -6, -15, -24, -18, 3.0, 1.4, c('#334155'), '#64748B', INK, 1.1);
+      drawRoundedPoly(ctx, [[-23, -18], [-27, -25], [-21, -24], [-20, -17]], c('#DC2626'), INK, 1.0);
+      ctx.strokeStyle = 'rgba(226, 232, 240, 0.85)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(-24, -20.5, 4.2, 0, Math.PI * 2);
+      ctx.stroke();
+      const tailAng = t * 44;
+      ctx.beginPath();
+      ctx.moveTo(-24 - Math.cos(tailAng) * 4, -20.5 - Math.sin(tailAng) * 4);
+      ctx.lineTo(-24 + Math.cos(tailAng) * 4, -20.5 + Math.sin(tailAng) * 4);
+      ctx.stroke();
+
+      // Landing skids
+      drawTaperedLimb(ctx, -7, -8, -8, -2, 1.1, 1.1, '#1E293B', '#64748B', INK, 0.9);
+      drawTaperedLimb(ctx, 7, -8, 8, -2, 1.1, 1.1, '#1E293B', '#64748B', INK, 0.9);
+      drawTaperedLimb(ctx, -12, -2, 13, -2, 1.4, 1.4, '#334155', '#94A3B8', INK, 1.0);
+
+      // Compact armored helicopter fuselage
+      drawInkEllipse(ctx, 1, -14, 13.5, 7.6, 0, c('#3F4E3C'), hi('#3F4E3C'), sh('#3F4E3C'), 1.3);
+      // Red/amber security stripe
+      px(ctx, -10, -14, 14, 2.2, '#FACC15');
+      // Glowing tinted bubble cockpit canopy
+      drawRoundedPoly(
+        ctx,
+        [
+          [3, -19.5],
+          [12.5, -17.0],
+          [14.0, -12.0],
+          [3, -11.5],
+        ],
+        '#0EA5E9',
+        INK,
+        1.1
+      );
+      px(ctx, 6, -17.5, 5, 1.8, '#E0F2FE');
+
+      // Underslung chin autocannon pod
+      drawRoundedRect(ctx, 8, -8.5, 9.5, 3.2, 0.8, '#1E293B', INK, 0.9);
+      if (Math.floor(t * 6) % 2 === 0) {
+        px(ctx, -11, -18, 2.5, 2.5, '#FF2A85');
+      }
+
+      // Main overhead rotor mast + blur disc + spinning rotor blades
+      drawRoundedRect(ctx, -1.8, -26, 3.6, 5.5, 0.8, '#64748B', INK, 0.9);
+      ctx.fillStyle = 'rgba(226, 232, 240, 0.34)';
+      ctx.beginPath();
+      ctx.ellipse(0, -26.5, 22, 2.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#F8FAFC';
+      ctx.lineWidth = 1.7;
+      ctx.beginPath();
+      ctx.moveTo(-bladeW, -26.5);
+      ctx.lineTo(bladeW, -26.5);
+      ctx.stroke();
+
+      ctx.restore();
+      break;
+    }
+
+    case 'heavy_heli': {
+      // Heavy armored twin-pod gunship mini-helicopter!
+      const bobH = Math.sin(t * 5.2) * 2.2;
+      const bladeW1 = 7 + Math.abs(Math.sin(t * 50)) * 22;
+      const bladeW2 = 7 + Math.abs(Math.cos(t * 50)) * 20;
+      ctx.save();
+      ctx.translate(0, bobH);
+      ctx.rotate(0.06);
+
+      // Searchlight cone sweeping downward
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.14)';
+      ctx.beginPath();
+      ctx.moveTo(14, -9);
+      ctx.lineTo(38, 24);
+      ctx.lineTo(4, 24);
+      ctx.closePath();
+      ctx.fill();
+
+      // Heavy armored tail boom + twin fin + ducted tail fan
+      drawTaperedLimb(ctx, -10, -18, -32, -21, 4.2, 2.0, c('#1E293B'), '#475569', INK, 1.25);
+      drawRoundedPoly(ctx, [[-31, -21], [-36, -30], [-28, -29], [-27, -19]], c('#1E293B'), INK, 1.15);
+      drawInkEllipse(ctx, -31.5, -23.5, 4.5, 4.5, 0, '#0F172A', '#38BDF8', INK, 1.1);
+      px(ctx, -35, -31, 3, 2.4, Math.floor(t * 8) % 2 === 0 ? '#FF2A85' : '#450A0A');
+
+      // Armored gunship body (angular Hind/Apache-inspired mini silhouette)
+      drawRoundedPoly(
+        ctx,
+        [
+          [-16, -24],
+          [8, -25],
+          [21, -16],
+          [19, -9],
+          [-14, -9],
+          [-19, -15],
+        ],
+        c('#1F2937'),
+        INK,
+        1.4
+      );
+      // Yellow/black industrial caution chevron stripe
+      for (let cx = -12; cx <= 4; cx += 6) {
+        px(ctx, cx, -14.5, 3, 3.2, '#FACC15');
+      }
+      // Glowing red armored gunship cockpit visor
+      drawRoundedPoly(ctx, [[5, -22.5], [17.5, -16.5], [16.5, -13], [5, -14]], '#DC2626', INK, 1.0);
+      px(ctx, 8, -20, 6, 1.8, '#FCA5A5');
+
+      // Heavy side rocket pod with red warhead tips
+      drawRoundedRect(ctx, -7, -13, 15, 7.5, 1.6, '#334155', INK, 1.1);
+      drawInkEllipse(ctx, 8.5, -11, 2.0, 1.6, 0, '#EF4444', '#FCA5A5', INK, 0.7);
+      drawInkEllipse(ctx, 8.5, -7.5, 2.0, 1.6, 0, '#EF4444', '#FCA5A5', INK, 0.7);
+
+      // Twin chin rotary turret
+      drawRoundedRect(ctx, 13, -10.5, 11, 3.5, 0.8, '#0F172A', INK, 1.0);
+      px(ctx, 21, -9.8, 3, 2.0, '#FACC15');
+
+      // Coaxial dual heavy rotors on top
+      drawRoundedRect(ctx, -2.5, -34, 5, 10, 1.0, '#475569', INK, 1.0);
+      ctx.fillStyle = 'rgba(203, 213, 225, 0.34)';
+      ctx.beginPath();
+      ctx.ellipse(0, -34.5, 28, 3.0, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, -30.5, 25, 2.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#F8FAFC';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(-bladeW1, -34.5);
+      ctx.lineTo(bladeW1, -34.5);
+      ctx.moveTo(-bladeW2, -30.5);
+      ctx.lineTo(bladeW2, -30.5);
+      ctx.stroke();
+
+      ctx.restore();
+      break;
+    }
+
+    case 'boss_electrician': {
+      // STAGE 3 BOSS: «ВОЛЬТАЖНЫЙ ПЕТРОВИЧ» — CRAZY ELECTRICIAN ON GIANT LEG SPRINGS WITH ELECTRO-HEDGEHOG HAIR!
+      const distToRoof = Math.max(0, 232 - e.y);
+      const springStretch =
+        distToRoof < 14
+          ? 0.62 + (distToRoof / 14) * 0.38
+          : Math.min(1.48, 1.0 + distToRoof / 160);
+      const springH = 22 * springStretch;
+      const bodyY = -springH - 22;
+      const elecCol = rage ? '#FF2A85' : '#00E5FF';
+      const sparkCol = '#FACC15';
+
+      // High-voltage Tesla aura crackling around him during telegraph or rage
+      if (e.telegraphTimer > 0 || rage) {
+        ctx.strokeStyle = e.telegraphTimer > 0 ? sparkCol : 'rgba(0, 229, 255, 0.58)';
+        ctx.lineWidth = 2.0;
+        ctx.beginPath();
+        ctx.arc(0, bodyY - 12, 34 + pulse * 5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // ── 1. GIANT COILED STEEL SPRINGS ATTACHED TO BOTH LEGS! ──
+      for (const legX of [-9, 9]) {
+        const topY = -springH - 4;
+        const botY = 0;
+        const coils = 5;
+        // Dark ink outer coil + gleaming metallic spring coil
+        for (const pass of [0, 1]) {
+          ctx.strokeStyle = pass === 0 ? INK : '#CBD5E1';
+          ctx.lineWidth = pass === 0 ? 4.4 : 2.3;
+          ctx.lineJoin = 'round';
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(legX, topY);
+          for (let ci = 0; ci < coils; ci++) {
+            const cy1 = topY + ((ci + 0.25) / coils) * (botY - topY);
+            const cy2 = topY + ((ci + 0.75) / coils) * (botY - topY);
+            ctx.lineTo(legX - 6.5, cy1);
+            ctx.lineTo(legX + 6.5, cy2);
+          }
+          ctx.lineTo(legX, botY);
+          ctx.stroke();
+        }
+        // Bright steel highlight pips on coils
+        ctx.fillStyle = '#FFFFFF';
+        for (let ci = 0; ci < coils; ci++) {
+          const cy1 = topY + ((ci + 0.25) / coils) * (botY - topY);
+          ctx.fillRect(legX - 5.5, cy1 - 0.8, 2.6, 1.4);
+        }
+        // Heavy insulated rubber spring-pad foot base
+        drawRoundedRect(ctx, legX - 7.5, -2.5, 15, 5.2, 1.6, '#1E293B', INK, 1.2);
+        px(ctx, legX - 6, -1.2, 12, 1.6, '#FACC15');
+        // Boot cuff bolted onto top of spring!
+        drawRoundedRect(ctx, legX - 5.5, topY - 6, 11, 7, 1.5, '#1D4ED8', INK, 1.1);
+        // Thigh connecting hip to spring boot
+        drawTaperedLimb(ctx, legX * 0.75, bodyY + 18, legX, topY - 4, 4.6, 3.8, c('#1E3A8A'), '#3B82F6', '#0F172A', 1.2);
+      }
+
+      // ── 2. TWIN HIGH-VOLTAGE TESLA COIL BACKPACK ──
+      for (const tx of [-18, 18]) {
+        drawRoundedRect(ctx, tx - 4.5, bodyY - 22, 9, 26, 1.6, '#334155', INK, 1.2);
+        for (let ry = bodyY - 19; ry <= bodyY - 3; ry += 4.5) {
+          px(ctx, tx - 3.5, ry, 7, 2.0, '#94A3B8');
+        }
+        drawInkEllipse(ctx, tx, bodyY - 24, 5.2, 4.2, 0, '#E2E8F0', '#FFFFFF', '#475569', 1.1);
+        // Crackling arcs snapping off Tesla globes!
+        if (Math.floor(t * 20 + tx) % 2 === 0) {
+          ctx.strokeStyle = elecCol;
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.moveTo(tx, bodyY - 26);
+          ctx.lineTo(tx + (tx < 0 ? -7 : 7), bodyY - 33 + Math.sin(t * 45) * 4);
+          ctx.lineTo(tx * 0.5, bodyY - 39);
+          ctx.stroke();
+        }
+      }
+
+      // ── 3. INSULATED ELECTRICIAN OVERALLS & UTILITY BELT ──
+      drawRoundedPoly(
+        ctx,
+        [
+          [-13, bodyY + 18],
+          [13, bodyY + 18],
+          [16, bodyY - 12],
+          [11, bodyY - 17],
+          [-11, bodyY - 17],
+          [-16, bodyY - 12],
+        ],
+        c('#FACC15'),
+        INK,
+        1.45
+      );
+      // Blue rubber electrician overalls bib + straps
+      drawRoundedRect(ctx, -10.5, bodyY - 7, 21, 22, 2.0, c('#1D4ED8'), INK, 1.15);
+      px(ctx, -9.5, bodyY - 16, 3.6, 11, '#2563EB');
+      px(ctx, 5.9, bodyY - 16, 3.6, 11, '#2563EB');
+      // High-voltage lightning bolt badge on chest
+      drawRoundedPoly(
+        ctx,
+        [
+          [1, bodyY - 4],
+          [-4, bodyY + 3],
+          [0, bodyY + 3],
+          [-2, bodyY + 10],
+          [4.5, bodyY + 1],
+          [0.5, bodyY + 1],
+        ],
+        '#FACC15',
+        INK,
+        0.7
+      );
+      // Tool belt with glowing capacitors
+      drawRoundedRect(ctx, -13.5, bodyY + 13, 27, 4.8, 1.0, '#18181B', INK, 1.0);
+      px(ctx, -10, bodyY + 14, 4, 2.8, '#00E5FF');
+      px(ctx, 6, bodyY + 14, 4, 2.8, '#EF4444');
+
+      // ── 4. MANIC ELECTROCUTED HEAD + SPIKY HEDGEHOG HAIR! ──
+      const headY = bodyY - 26;
+      // 11 wild jagged electrocuted hedgehog hair spikes standing straight up around his head!
+      const spikePts: Array<[number, number]> = [];
+      const numSpikes = 11;
+      for (let i = 0; i < numSpikes; i++) {
+        const a = Math.PI * 1.12 + (i / (numSpikes - 1)) * Math.PI * 0.76;
+        const jitter = Math.sin(t * 28 + i * 2.1) * 1.4;
+        const innerR = 9.5;
+        const outerR = (i % 2 === 0 ? 22.5 : 18.5) + jitter;
+        const aMid = a + (Math.PI * 0.76) / (numSpikes * 2);
+        spikePts.push([Math.cos(a) * innerR, headY + Math.sin(a) * innerR]);
+        spikePts.push([Math.cos(aMid) * outerR, headY + Math.sin(aMid) * outerR]);
+      }
+      spikePts.push([10.5, headY + 2]);
+      spikePts.push([-10.5, headY + 2]);
+      drawRoundedPoly(ctx, spikePts, c('#18181B'), INK, 1.25);
+
+      // Electric cyan/yellow sparks snapping directly inside his spiky hedgehog hair!
+      for (let sp = 0; sp < 3; sp++) {
+        const sa = Math.PI * 1.2 + ((t * 5 + sp * 1.3) % 1.0) * Math.PI * 0.6;
+        const sx1 = Math.cos(sa) * 12;
+        const sy1 = headY + Math.sin(sa) * 12;
+        const sx2 = Math.cos(sa + 0.18) * 23;
+        const sy2 = headY + Math.sin(sa + 0.18) * 23;
+        ctx.strokeStyle = sp % 2 === 0 ? '#00E5FF' : '#FACC15';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(sx1, sy1);
+        ctx.lineTo((sx1 + sx2) * 0.5 + 2, (sy1 + sy2) * 0.5 - 2);
+        ctx.lineTo(sx2, sy2);
+        ctx.stroke();
+      }
+
+      // Singed soot-smudged manic face
+      drawInkEllipse(ctx, 0, headY + 1, 9.8, 9.5, 0, c('#E7B894'), '#FDE6D2', '#9A6B4C', 1.2);
+      // Crazed wide mismatched glowing electric eyes!
+      drawInkEllipse(ctx, -3.5, headY - 0.5, 3.2, 3.6, 0, '#FFFFFF', undefined, undefined, 0.9);
+      drawInkEllipse(ctx, 4.0, headY - 0.5, 3.8, 4.0, 0, '#FFFFFF', undefined, undefined, 0.9);
+      drawInkEllipse(ctx, -3.0, headY - 0.3, 1.3, 1.5, 0, elecCol, '#FFFFFF', INK, 0.5);
+      drawInkEllipse(ctx, 4.5, headY - 0.3, 1.5, 1.7, 0, elecCol, '#FFFFFF', INK, 0.5);
+      // Maniacal zigzag toothy grin
+      drawRoundedRect(ctx, -5.2, headY + 4.5, 10.4, 3.6, 1.0, '#FFFFFF', INK, 0.85);
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(-5, headY + 6.3);
+      ctx.lineTo(5, headY + 6.3);
+      ctx.stroke();
+
+      // ── 5. ARMS WITH INSULATED RUBBER GAUNTLETS & LIVE ELECTRIC ARCS ──
+      const armWave = Math.sin(t * 9) * 3.5;
+      // Back arm
+      drawTaperedLimb(ctx, -13, bodyY - 10, -21, bodyY - 2 - armWave, 4.0, 3.4, c('#FACC15'), '#FEF08A', '#A16207', 1.15);
+      drawInkEllipse(ctx, -23, bodyY - 1 - armWave, 5.2, 4.6, 0, '#2563EB', '#60A5FA', INK, 1.1);
+      // Front firing arm aiming lightning bolt forward!
+      drawTaperedLimb(ctx, 13, bodyY - 10, 23, bodyY - 4 + armWave * 0.5, 4.2, 3.6, c('#FACC15'), '#FEF08A', '#A16207', 1.2);
+      drawInkEllipse(ctx, 25.5, bodyY - 4 + armWave * 0.5, 5.5, 4.8, 0, '#2563EB', '#60A5FA', INK, 1.15);
+      // Crackling electric orb in firing gauntlet
+      const orbR = e.telegraphTimer > 0 ? 7.5 + pulse * 3 : 4.2 + pulse * 1.8;
+      drawInkEllipse(ctx, 29, bodyY - 4 + armWave * 0.5, orbR, orbR, 0, elecCol, '#FFFFFF', '#0369A1', 0);
+      break;
+    }
+
+    case 'boss_substation': {
+      // STAGE 3 POST-BOSS TARGET: 10,000V ELECTRIC FENCE POWER SUBSTATION — SHOOT TO BLOW IT UP!
+      // Neutralize horizontal facing flip so hazard signs ("10kV", "ВЗОРВИ!") always render cleanly!
+      ctx.save();
+      ctx.scale(e.facing, 1);
+
+      const dmg = 1 - Math.max(0, Math.min(1, e.hpRatio));
+      const shakeX = e.hurtTimer > 0 ? Math.sin(t * 70) * 2.5 : dmg > 0.65 ? Math.sin(t * 36) * 0.8 : 0;
+      ctx.translate(shakeX, 0);
+
+      // Heavy concrete rooftop foundation base (y = 36..50)
+      box(ctx, -36, 34, 72, 16, '#475569', '#94A3B8', '#1E293B');
+      for (let sx = -32; sx < 32; sx += 12) {
+        px(ctx, sx, 43, 6, 5, '#FACC15');
+        px(ctx, sx + 6, 43, 6, 5, '#090C11');
+      }
+
+      // Main armored industrial transformer housing (y = -34..34)
+      box(ctx, -28, -34, 56, 68, c('#334155'), '#64748B', '#0F172A');
+
+      // Side steel radiator cooling fins
+      for (let fy = -28; fy <= 22; fy += 7) {
+        box(ctx, -34, fy, 6, 4, '#475569', '#94A3B8', INK);
+        box(ctx, 28, fy, 6, 4, '#475569', '#94A3B8', INK);
+      }
+
+      // Glowing high-voltage plasma capacitor tubes behind armored grille
+      const tubeCol = dmg > 0.6 ? '#FF2A85' : '#00E5FF';
+      for (const gx of [-16, 0, 16]) {
+        box(ctx, gx - 5, -24, 10, 32, '#0B1221', tubeCol, INK);
+        const levelH = 18 + Math.sin(t * 14 + gx) * 6;
+        px(ctx, gx - 3, 6 - levelH, 6, levelH, tubeCol);
+        px(ctx, gx - 1, 6 - levelH, 2, levelH, '#FFFFFF');
+      }
+
+      // Bright yellow high-voltage hazard plaque («⚡ 10kV ⚡»)
+      box(ctx, -20, 12, 40, 16, '#FACC15', '#FEF08A', '#854D0E');
+      ctx.fillStyle = '#090C11';
+      ctx.font = 'bold 8px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('⚡ 10kV ⚡', 0, 23);
+      ctx.textAlign = 'left';
+
+      // Twin tall ribbed porcelain high-voltage insulator spires on top (y = -68..-34)
+      for (const ix of [-15, 15]) {
+        px(ctx, ix - 3, -64, 6, 30, '#CBD5E1');
+        for (let ry = -60; ry <= -38; ry += 6) {
+          box(ctx, ix - 7, ry, 14, 3.5, '#E2E8F0', '#FFFFFF', '#64748B');
+        }
+        drawInkEllipse(ctx, ix, -66, 5.5, 4.5, 0, '#94A3B8', '#FFFFFF', '#334155', 1.1);
+      }
+
+      // Thick feeder power cables running off right side toward the electrified factory fence
+      ctx.strokeStyle = '#1E293B';
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(15, -66);
+      ctx.quadraticCurveTo(38, -56, 62, -62);
+      ctx.moveTo(28, -16);
+      ctx.quadraticCurveTo(46, -12, 62, -16);
+      ctx.stroke();
+
+      // Crackling electric arc snapping between top porcelain insulator spires
+      ctx.strokeStyle = Math.floor(t * 18) % 2 === 0 ? '#00E5FF' : '#FEF08A';
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.moveTo(-15, -66);
+      ctx.lineTo(-6, -71 + Math.sin(t * 50) * 5);
+      ctx.lineTo(5, -62 + Math.cos(t * 46) * 5);
+      ctx.lineTo(15, -66);
+      ctx.stroke();
+
+      // Progressive battle damage: cracks, smoke & flames as HP drops!
+      if (dmg > 0.25) {
+        ctx.strokeStyle = INK;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(-22, -14);
+        ctx.lineTo(-10, -4);
+        ctx.lineTo(-16, 8);
+        ctx.moveTo(18, -26);
+        ctx.lineTo(8, -12);
+        ctx.stroke();
+      }
+      if (dmg > 0.5) {
+        for (let f = 0; f < 3; f++) {
+          const fx = -16 + f * 16;
+          const fy = -24 + ((f * 13) % 24);
+          const flH = 8 + Math.sin(t * 28 + f * 2) * 4;
+          drawInkEllipse(ctx, fx, fy - flH * 0.4, 5.5, flH, 0, '#F97316', '#FEF08A', '#DC2626', 0);
+        }
+        // Rising dark smoke plumes
+        for (let sm = 0; sm < 4; sm++) {
+          const prog = (t * 0.9 + sm * 0.25) % 1;
+          ctx.fillStyle = `rgba(30, 41, 59, ${0.65 * (1 - prog)})`;
+          ctx.beginPath();
+          ctx.arc(-10 + sm * 8 + Math.sin(t * 5 + sm) * 5, -36 - prog * 42, 6 + prog * 9, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Flashing tactical target reticle & «ВЗОРВИ!» prompt so objective is crystal clear!
+      const lockBlink = Math.floor(t * 10) % 2 === 0;
+      ctx.strokeStyle = lockBlink ? '#FF2A85' : '#FACC15';
+      ctx.lineWidth = 1.8;
+      const rSize = 22 + Math.sin(t * 9) * 2.5;
+      ctx.beginPath();
+      ctx.arc(0, -6, rSize, 0, Math.PI * 2);
+      ctx.moveTo(-rSize - 5, -6);
+      ctx.lineTo(-rSize + 4, -6);
+      ctx.moveTo(rSize - 4, -6);
+      ctx.lineTo(rSize + 5, -6);
+      ctx.moveTo(0, -6 - rSize - 5);
+      ctx.lineTo(0, -6 - rSize + 4);
+      ctx.moveTo(0, -6 + rSize - 4);
+      ctx.lineTo(0, -6 + rSize + 5);
+      ctx.stroke();
+
+      box(ctx, -30, -86, 60, 14, '#090C11', lockBlink ? '#FF2A85' : '#FACC15', INK);
+      ctx.fillStyle = lockBlink ? '#FACC15' : '#FF2A85';
+      ctx.font = 'bold 8px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('ВЗОРВИ!', 0, -76);
+      ctx.textAlign = 'left';
+
+      ctx.restore();
+      break;
+    }
   }
 
   // Boss Phase 2/3 damaged sparks & crackling arcs
@@ -3448,20 +4148,22 @@ function drawCyberSkyline(
     daylight
       ? level.id === 2
         ? '#FEF3C7'
-        : level.id === 4
+        : level.id === 5
           ? '#E0F2FE'
           : '#F1F5F9'
-      : level.id === 3
+      : level.id === 4
         ? '#0E2430'
-        : '#102028'
+        : level.id === 3
+          ? '#112645'
+          : '#102028'
   );
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
 
   if (daylight) {
     // Radiant daytime sun + warm atmospheric glow
-    const sunX = level.id === 4 ? VIRTUAL_W - 102 : VIRTUAL_W - 76 - ((camX * 0.015) % 30);
-    const sunY = (level.id === 6 ? 26 : 30) + Math.round(skyShiftY * 0.25);
+    const sunX = level.id === 5 ? VIRTUAL_W - 102 : VIRTUAL_W - 76 - ((camX * 0.015) % 30);
+    const sunY = (level.id === 7 ? 26 : 30) + Math.round(skyShiftY * 0.25);
     const sunGrad = ctx.createRadialGradient(sunX, sunY, 4, sunX, sunY, 58);
     sunGrad.addColorStop(0, 'rgba(255, 251, 235, 0.95)');
     sunGrad.addColorStop(0.32, 'rgba(254, 240, 138, 0.45)');
@@ -3490,8 +4192,8 @@ function drawCyberSkyline(
       ctx.fillRect(cx + 6, cy + 8, 44, 2.5);
     }
 
-    // Soaring coastal birds on outdoor sunny levels (2 & 4)
-    if (level.id === 2 || level.id === 4) {
+    // Soaring coastal birds on outdoor sunny levels (2 & 5)
+    if (level.id === 2 || level.id === 5) {
       ctx.strokeStyle = '#334155';
       ctx.lineWidth = 1;
       for (let b = 0; b < 4; b++) {
@@ -3511,7 +4213,7 @@ function drawCyberSkyline(
 
     // Distant sunlit mountain / coastal ridge in atmospheric blue haze
     const mtnScroll = Math.floor((speedOverride !== undefined ? speedOverride * 0.14 : camX * 0.1));
-    ctx.fillStyle = level.id === 2 ? '#93C5FD' : level.id === 4 ? '#7DD3FC' : '#BAE6FD';
+    ctx.fillStyle = level.id === 2 ? '#93C5FD' : level.id === 5 ? '#7DD3FC' : '#BAE6FD';
     ctx.beginPath();
     ctx.moveTo(0, VIRTUAL_H + 140);
     for (let x = -40; x <= VIRTUAL_W + 60; x += 48) {
@@ -3645,7 +4347,8 @@ export function drawLevelBackground(
   level: LevelDef,
   camX: number,
   time: number,
-  elevatorFloor = 1
+  elevatorFloor = 1,
+  stageFlags?: { substationLive?: boolean; substationDestroyed?: boolean }
 ): void {
   const midScroll = Math.floor(camX * 0.65);
   const camY = getCameraOffsetY(level.id, camX);
@@ -3771,6 +4474,223 @@ export function drawLevelBackground(
     ctx.textAlign = 'center';
     ctx.fillText('PIZED LIFT #01', VIRTUAL_W / 2, FLOOR_MIN_Y + 49);
     ctx.textAlign = 'left';
+
+    drawLevelLandmarks(ctx, level, camX, time);
+    return;
+  }
+
+  // =========================================================================
+  // LEVEL 3 (FLIGHT): ROOFTOP QUADCOPTER RAID OVER CITY TO ELECTRIC SUBSTATION!
+  // =========================================================================
+  if (level.mode === 'flight') {
+    const fencePowerOn = !stageFlags?.substationDestroyed;
+    const stormFlash = Math.sin(time * 1.9) > 0.96 && Math.floor(time * 18) % 2 === 0;
+
+    // 1. Stormy Electric-Twilight Sky Gradient
+    const skyG = ctx.createLinearGradient(0, 0, 0, VIRTUAL_H);
+    skyG.addColorStop(0, stormFlash ? '#1E3A6E' : '#060C1F');
+    skyG.addColorStop(0.55, stormFlash ? '#264980' : '#102344');
+    skyG.addColorStop(1, '#1A3454');
+    ctx.fillStyle = skyG;
+    ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
+
+    // Drifting dark thunderclouds illuminated from below by neon & factory glow
+    const cloudScroll = Math.floor(camX * 0.09 + time * 10);
+    for (let i = -1; i < 7; i++) {
+      const cx = i * 112 - (cloudScroll % 112);
+      const cy = 22 + (tileHash(i, 37) % 3) * 14;
+      ctx.fillStyle = stormFlash ? 'rgba(96, 165, 250, 0.36)' : 'rgba(15, 23, 42, 0.62)';
+      ctx.beginPath();
+      ctx.ellipse(cx + 36, cy + 6, 36, 10, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx + 18, cy + 2, 22, 9, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx + 54, cy + 3, 24, 8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      px(ctx, cx + 10, cy + 12, 52, 1.5, 'rgba(56, 189, 248, 0.22)');
+    }
+
+    // Distant factory brewery smokestacks & green-lit towers on the horizon (0.18x parallax)
+    const farScroll = Math.floor(camX * 0.18);
+    const farStep = 96;
+    const fStart = Math.floor(farScroll / farStep) - 1;
+    for (let k = 0; k < 7; k++) {
+      const idx = fStart + k;
+      const fx = idx * farStep - farScroll;
+      const h = tileHash(idx, 301);
+      const bh = 68 + (h % 5) * 16;
+      const topY = 212 - bh;
+      px(ctx, fx + 4, topY, 46, bh + 60, '#0B1528');
+      px(ctx, fx + 54, topY + 14, 32, bh + 46, '#0E1B32');
+      if (h % 2 === 0) {
+        // Tall industrial smokestack with blinking red aviation warning light
+        px(ctx, fx + 22, topY - 28, 8, 30, '#13223D');
+        if (Math.floor(time * 3 + idx) % 2 === 0) {
+          px(ctx, fx + 24, topY - 31, 4, 3, '#FF2A85');
+        }
+      }
+      // Distant lit factory windows
+      for (let wy = topY + 10; wy < 192; wy += 12) {
+        if ((h + wy) % 3 !== 0) {
+          px(ctx, fx + 10, wy, 14, 2.5, (h + wy) % 5 === 0 ? '#39FF14' : '#38BDF8');
+        }
+      }
+    }
+
+    // 2. Mid-Ground ELECTRIFIED FACTORY PERIMETER FENCE (goes dark once substation blows up!)
+    const fenceScroll = Math.floor(camX * 0.48);
+    const fenceY = 188;
+    px(ctx, 0, fenceY + 26, VIRTUAL_W, 56, '#0A101B');
+    // Horizontal high-voltage wire strands
+    for (const wireY of [fenceY + 4, fenceY + 12, fenceY + 20]) {
+      px(ctx, 0, wireY, VIRTUAL_W, 1.4, fencePowerOn ? 'rgba(0, 229, 255, 0.52)' : '#334155');
+    }
+    const postStep = 44;
+    const pStart = Math.floor(fenceScroll / postStep) - 1;
+    for (let k = 0; k < 13; k++) {
+      const idx = pStart + k;
+      const postX = idx * postStep - fenceScroll;
+      // Steel pylon post + angled top insulator arm
+      px(ctx, postX, fenceY, 3, 32, '#475569');
+      px(ctx, postX + 1, fenceY - 5, 2, 6, '#94A3B8');
+      px(ctx, postX - 2, fenceY - 6, 7, 2.5, fencePowerOn ? '#00E5FF' : '#475569');
+      // Crackling 10,000V arcs jumping between fence posts while substation is intact!
+      if (fencePowerOn && Math.floor(time * 14 + idx * 3) % 3 === 0) {
+        ctx.strokeStyle = Math.floor(time * 24 + idx) % 2 === 0 ? '#00E5FF' : '#FEF08A';
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        ctx.moveTo(postX + 2, fenceY + 6);
+        ctx.lineTo(postX + 16, fenceY + 10 + Math.sin(time * 40 + idx) * 4);
+        ctx.lineTo(postX + 30, fenceY + 4 + Math.cos(time * 36 + idx) * 4);
+        ctx.lineTo(postX + postStep, fenceY + 8);
+        ctx.stroke();
+      }
+    }
+
+    // 3. FOREGROUND SCROLLING CITY ROOFTOPS (chimneys, water towers, AC vents, TV antennas!)
+    const roofTileW = 104;
+    const rStart = Math.floor(camX / roofTileW) - 1;
+    for (let k = 0; k < 7; k++) {
+      const idx = rStart + k;
+      const rx = idx * roofTileW - camX;
+      const h = tileHash(idx, 319);
+      const variant = h % 5;
+      const roofTop = 224 + (h % 3) * 5;
+      const wallCol = variant % 2 === 0 ? '#182233' : '#1E293B';
+      const trimCol = variant % 2 === 0 ? '#475569' : '#64748B';
+
+      // Building facade extending to bottom of screen
+      box(ctx, rx + 2, roofTop, roofTileW - 4, VIRTUAL_H - roofTop + 8, wallCol, trimCol, INK);
+      // Crisp parapet cap along roofline
+      px(ctx, rx, roofTop - 3, roofTileW, 4, '#334155');
+      px(ctx, rx, roofTop - 3, roofTileW, 1.2, '#94A3B8');
+
+      // Warm lit apartment windows below roofline
+      for (let wx = 12; wx < roofTileW - 18; wx += 20) {
+        const lit = (h + wx) % 3 !== 0;
+        px(ctx, rx + wx, roofTop + 12, 11, 14, lit ? '#FDE68A' : '#0F172A');
+        if (lit) px(ctx, rx + wx + 1, roofTop + 13, 9, 4, '#FEF9C3');
+      }
+
+      // Varied rooftop silhouettes & props!
+      if (variant === 0) {
+        // Rooftop wooden/steel water tower
+        px(ctx, rx + 28, roofTop - 16, 3, 14, '#475569');
+        px(ctx, rx + 46, roofTop - 16, 3, 14, '#475569');
+        box(ctx, rx + 24, roofTop - 34, 28, 19, '#78350F', '#B45309', '#451A03');
+        drawRoundedPoly(ctx, [[rx + 21, roofTop - 34], [rx + 38, roofTop - 44], [rx + 55, roofTop - 34]], '#334155', INK, 1.0);
+      } else if (variant === 1) {
+        // HVAC AC chiller units + spinning exhaust fan
+        box(ctx, rx + 14, roofTop - 14, 22, 12, '#475569', '#CBD5E1', INK);
+        box(ctx, rx + 48, roofTop - 12, 18, 10, '#334155', '#94A3B8', INK);
+        px(ctx, rx + 18, roofTop - 11, 12, 6, '#0F172A');
+      } else if (variant === 2) {
+        // Brick chimney + TV antenna mast
+        box(ctx, rx + 20, roofTop - 18, 12, 16, '#7C2D12', '#C2410C', INK);
+        px(ctx, rx + 68, roofTop - 28, 2, 26, '#94A3B8');
+        px(ctx, rx + 60, roofTop - 24, 18, 1.5, '#CBD5E1');
+        px(ctx, rx + 63, roofTop - 19, 12, 1.5, '#CBD5E1');
+      } else if (variant === 3) {
+        // Rooftop billboard / neon «10 000В ОПАСНО» sign near factory perimeter!
+        px(ctx, rx + 22, roofTop - 22, 3, 20, '#475569');
+        px(ctx, rx + 72, roofTop - 22, 3, 20, '#475569');
+        box(ctx, rx + 16, roofTop - 30, 66, 16, '#090C11', '#FACC15', INK);
+        ctx.fillStyle = '#FACC15';
+        ctx.font = 'bold 6px monospace';
+        ctx.fillText('⚡ ЗАБОР 10kV', rx + 22, roofTop - 19);
+      } else {
+        // Rooftop staircase penthouse + utility pole
+        box(ctx, rx + 26, roofTop - 20, 32, 18, '#334155', '#64748B', INK);
+        px(ctx, rx + 36, roofTop - 14, 10, 12, '#0F172A');
+      }
+    }
+
+    // 4. BOSS ARENA RIGHT-END SUBSTATION PAD (shows intact substation during Electrician fight, or blown crater after!)
+    const padX = level.length - 56 - camX;
+    if (padX > -120 && padX < VIRTUAL_W + 120) {
+      // Heavy industrial reinforced concrete substation deck on factory roof
+      box(ctx, padX - 46, 224, 98, 46, '#334155', '#94A3B8', INK);
+      for (let sx = -42; sx < 48; sx += 12) {
+        px(ctx, padX + sx, 224, 6, 5, '#FACC15');
+        px(ctx, padX + sx + 6, 224, 6, 5, '#090C11');
+      }
+
+      if (!stageFlags?.substationLive && !stageFlags?.substationDestroyed) {
+        // Show the intact pulsing substation waiting behind the Crazy Electrician!
+        box(ctx, padX - 28, 150, 56, 74, '#334155', '#64748B', '#0F172A');
+        for (const gx of [-15, 0, 15]) {
+          box(ctx, padX + gx - 4, 160, 8, 28, '#0B1221', '#00E5FF', INK);
+          px(ctx, padX + gx - 2, 168, 4, 16, '#00E5FF');
+        }
+        box(ctx, padX - 18, 196, 36, 14, '#FACC15', '#FEF08A', '#854D0E');
+        ctx.fillStyle = '#090C11';
+        ctx.font = 'bold 7px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚡ 10kV ⚡', padX, 206);
+        ctx.textAlign = 'left';
+        for (const ix of [-14, 14]) {
+          px(ctx, padX + ix - 3, 122, 6, 28, '#CBD5E1');
+          drawInkEllipse(ctx, padX + ix, 120, 5, 4, 0, '#94A3B8', '#FFFFFF', '#334155', 1.0);
+        }
+        ctx.strokeStyle = Math.floor(time * 16) % 2 === 0 ? '#00E5FF' : '#FEF08A';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(padX - 14, 120);
+        ctx.lineTo(padX, 114 + Math.sin(time * 40) * 4);
+        ctx.lineTo(padX + 14, 120);
+        ctx.stroke();
+      } else if (stageFlags?.substationDestroyed) {
+        // Charred smoking blast ruin after substation is blown up!
+        drawRoundedPoly(
+          ctx,
+          [
+            [padX - 30, 224],
+            [padX - 22, 206],
+            [padX - 8, 214],
+            [padX + 4, 202],
+            [padX + 18, 216],
+            [padX + 32, 224],
+          ],
+          '#18181B',
+          INK,
+          1.2
+        );
+        for (let sm = 0; sm < 5; sm++) {
+          const prog = (time * 0.65 + sm * 0.2) % 1;
+          ctx.fillStyle = `rgba(51, 65, 85, ${0.65 * (1 - prog)})`;
+          ctx.beginPath();
+          ctx.arc(padX - 12 + sm * 7 + Math.sin(time * 4 + sm) * 6, 204 - prog * 56, 7 + prog * 11, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        const fH = 6 + Math.sin(time * 22) * 3;
+        drawInkEllipse(ctx, padX - 4, 212 - fH * 0.4, 5, fH, 0, '#F97316', '#FEF08A', '#DC2626', 0);
+      }
+    }
+
+    // Subtle fast wind-streak lines in the high-altitude flight zone
+    for (let w = 0; w < 7; w++) {
+      const wx = VIRTUAL_W - ((Math.floor(time * 240 + w * 83)) % (VIRTUAL_W + 40));
+      const wy = 44 + (w * 25) % 156;
+      px(ctx, wx, wy, 16, 1.1, 'rgba(186, 230, 253, 0.16)');
+    }
 
     drawLevelLandmarks(ctx, level, camX, time);
     return;
@@ -4204,9 +5124,9 @@ export function drawLevelBackground(
     }
 
   // =========================================================================
-  // LEVEL 3 (DARK): NIGHT FACTORY PERIMETER — SEARCHLIGHTS & INDUSTRIAL WALLS
+  // LEVEL 4 (DARK): NIGHT FACTORY PERIMETER — SEARCHLIGHTS & INDUSTRIAL WALLS
   // =========================================================================
-  } else if (level.id === 3) {
+  } else if (level.id === 4) {
     drawCyberSkyline(ctx, level, camX, time, undefined, camY);
 
     // Distant colossal brewery cooling towers
@@ -4245,7 +5165,7 @@ export function drawLevelBackground(
       const fx = wIdx * tileW - midScroll;
       const h = tileHash(wIdx, 33);
       const variant = h % 8;
-      const el = Math.round(getGroundElevation(3, camX + fx + tileW * 0.5) - camY);
+      const el = Math.round(getGroundElevation(4, camX + fx + tileW * 0.5) - camY);
 
       ctx.save();
       ctx.translate(0, el);
@@ -4365,20 +5285,20 @@ export function drawLevelBackground(
       ctx.restore();
     }
 
-    drawSlopedGroundSurface(ctx, 3, camX, camY, '#121922', '#475569', '#070A0F');
+    drawSlopedGroundSurface(ctx, 4, camX, camY, '#121922', '#475569', '#070A0F');
     const cStart = Math.floor(camX / 72) - 1;
     for (let k = 0; k < 9; k++) {
       const idx = cStart + k;
       const tileWorldX = idx * 72;
-      drawSlopedStrip(ctx, 3, camX, camY, tileWorldX, 198, 38, 3, '#243244');
-      drawSlopedStrip(ctx, 3, camX, camY, tileWorldX + 12, 168, 22, 3, 'rgba(0,229,255,0.22)');
-      drawSlopedStrip(ctx, 3, camX, camY, tileWorldX + 40, 232, 24, 4, 'rgba(57,255,20,0.16)');
+      drawSlopedStrip(ctx, 4, camX, camY, tileWorldX, 198, 38, 3, '#243244');
+      drawSlopedStrip(ctx, 4, camX, camY, tileWorldX + 12, 168, 22, 3, 'rgba(0,229,255,0.22)');
+      drawSlopedStrip(ctx, 4, camX, camY, tileWorldX + 40, 232, 24, 4, 'rgba(57,255,20,0.16)');
     }
 
   // =========================================================================
-  // LEVEL 4 (LIGHT): SUNNY DAYTIME COASTAL HIGHWAY ON HARLEY CRUISERS!
+  // LEVEL 5 (LIGHT): SUNNY DAYTIME COASTAL HIGHWAY ON HARLEY CRUISERS!
   // =========================================================================
-  } else if (level.id === 4) {
+  } else if (level.id === 5) {
     const speedScroll = Math.floor(time * 380);
     const biome = camX < 2500 ? 0 : camX < 4600 ? 1 : camX < 7300 ? 2 : 3;
     const hwYShift = Math.round(-camY * 0.24);
@@ -4481,7 +5401,7 @@ export function drawLevelBackground(
     }
 
     // Steep Sloped Sun-Baked Gray Highway Asphalt + Silver Guardrail!
-    drawSlopedGroundSurface(ctx, 4, camX, camY, '#46505D', '#CBD5E1', '#1E293B', '#64748B');
+    drawSlopedGroundSurface(ctx, 5, camX, camY, '#46505D', '#CBD5E1', '#1E293B', '#64748B');
 
     // Sloped metal W-beam guardrail + orange reflectors along road edge
     ctx.strokeStyle = '#94A3B8';
@@ -4489,26 +5409,26 @@ export function drawLevelBackground(
     ctx.beginPath();
     for (let x = 0; x <= VIRTUAL_W + 12; x += 12) {
       const sx = Math.min(VIRTUAL_W, x);
-      const gy = FLOOR_MIN_Y - 5 + getGroundElevation(4, camX + sx) - camY;
+      const gy = FLOOR_MIN_Y - 5 + getGroundElevation(5, camX + sx) - camY;
       if (x === 0) ctx.moveTo(sx, gy);
       else ctx.lineTo(sx, gy);
     }
     ctx.stroke();
     for (let x = -(speedScroll % 44); x < VIRTUAL_W; x += 44) {
-      drawSlopedStrip(ctx, 4, camX, camY, camX + x, FLOOR_MIN_Y - 6, 8, 3, '#F97316');
+      drawSlopedStrip(ctx, 5, camX, camY, camX + x, FLOOR_MIN_Y - 6, 8, 3, '#F97316');
     }
 
     // Sloped crisp white dashed highway lane markings tilted along steep ramps & bends!
     for (const laneY of [184, 220]) {
       for (let x = -(speedScroll % 72); x < VIRTUAL_W; x += 72) {
-        drawSlopedStrip(ctx, 4, camX, camY, camX + x, laneY, 36, 3, '#F8FAFC');
+        drawSlopedStrip(ctx, 5, camX, camY, camX + x, laneY, 36, 3, '#F8FAFC');
       }
     }
     // Subtle sunlit asphalt wind-rush streaks
     for (let s = 0; s < 8; s++) {
       const lx = VIRTUAL_W - ((Math.floor(time * 540) + s * 91) % (VIRTUAL_W + 60));
-      const ly0 = 160 + (s * 11) % 88 + getGroundElevation(4, camX + lx) - camY;
-      const ly1 = 160 + (s * 11) % 88 + getGroundElevation(4, camX + lx + 22) - camY;
+      const ly0 = 160 + (s * 11) % 88 + getGroundElevation(5, camX + lx) - camY;
+      const ly1 = 160 + (s * 11) % 88 + getGroundElevation(5, camX + lx + 22) - camY;
       ctx.strokeStyle = 'rgba(255,255,255,0.22)';
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -4556,15 +5476,15 @@ export function drawLevelBackground(
       ctx.fillText('DIRECTOR PENTHOUSE', cx - 34, cy + 15);
 
       // Polished bright cream-marble penthouse floor with emerald geometric inlays!
-      drawSlopedGroundSurface(ctx, 6, camX, camY, '#E5E7EB', '#F8FAFC', '#94A3B8');
+      drawSlopedGroundSurface(ctx, 7, camX, camY, '#E5E7EB', '#F8FAFC', '#94A3B8');
       const mStart = Math.floor(camX / 64) - 1;
       for (let k = 0; k < 10; k++) {
         const idx = mStart + k;
         const tileWorldX = idx * 64;
         const rx = tileWorldX - camX;
-        const rEl = getGroundElevation(6, tileWorldX) - camY;
+        const rEl = getGroundElevation(7, tileWorldX) - camY;
         px(ctx, rx, FLOOR_MIN_Y + 9 + rEl, 1.5, VIRTUAL_H - FLOOR_MIN_Y - 16, '#CBD5E1');
-        drawSlopedStrip(ctx, 6, camX, camY, tileWorldX + 14, 198, 30, 2, 'rgba(16, 185, 129, 0.28)');
+        drawSlopedStrip(ctx, 7, camX, camY, tileWorldX + 14, 198, 30, 2, 'rgba(16, 185, 129, 0.28)');
       }
     } else if (camX > 3100) {
       // ACT 2: BRIGHT DAYLIGHT GLASS R&D LAB & STERILE MAINFRAME CORRIDOR
@@ -4581,7 +5501,7 @@ export function drawLevelBackground(
         const sx = wIdx * tileW - midScroll;
         const h = tileHash(wIdx, 62);
         const variant = h % 5;
-        const el = Math.round(getGroundElevation(6, camX + sx + tileW * 0.5) - camY);
+        const el = Math.round(getGroundElevation(7, camX + sx + tileW * 0.5) - camY);
 
         ctx.save();
         ctx.translate(0, el);
@@ -4643,15 +5563,15 @@ export function drawLevelBackground(
         ctx.restore();
       }
 
-      drawSlopedGroundSurface(ctx, 6, camX, camY, '#DCE4EE', '#F8FAFC', '#94A3B8');
+      drawSlopedGroundSurface(ctx, 7, camX, camY, '#DCE4EE', '#F8FAFC', '#94A3B8');
       const fStart = Math.floor(camX / 56) - 1;
       for (let k = 0; k < 10; k++) {
         const idx = fStart + k;
         const tileWorldX = idx * 56;
         const rx = tileWorldX - camX;
-        const rEl = getGroundElevation(6, tileWorldX) - camY;
+        const rEl = getGroundElevation(7, tileWorldX) - camY;
         px(ctx, rx, FLOOR_MIN_Y + 9 + rEl, 1, VIRTUAL_H - FLOOR_MIN_Y - 16, '#CBD5E1');
-        drawSlopedStrip(ctx, 6, camX, camY, tileWorldX + 10, 206, 24, 2, 'rgba(2,132,199,0.22)');
+        drawSlopedStrip(ctx, 7, camX, camY, tileWorldX + 10, 206, 24, 2, 'rgba(2,132,199,0.22)');
       }
     } else {
       // ACT 1: BRIGHT DAYLIGHT MODERN BREWERY HALL WITH SKYLIGHT SUNBEAMS!
@@ -4668,7 +5588,7 @@ export function drawLevelBackground(
         const vx = wIdx * tileW - midScroll;
         const h = tileHash(wIdx, 61);
         const variant = h % 5;
-        const el = Math.round(getGroundElevation(6, camX + vx + tileW * 0.5) - camY);
+        const el = Math.round(getGroundElevation(7, camX + vx + tileW * 0.5) - camY);
 
         ctx.save();
         ctx.translate(0, el);
@@ -4746,13 +5666,13 @@ export function drawLevelBackground(
       }
 
       // Bright Polished Light-Epoxy Factory Floor + Sloped Green-Beer Conveyor Belt!
-      drawSlopedGroundSurface(ctx, 6, camX, camY, '#CBD5E1', '#F1F5F9', '#64748B');
-      drawSlopedStrip(ctx, 6, camX, camY, camX, FLOOR_MIN_Y + 9, VIRTUAL_W, 11, '#334155');
+      drawSlopedGroundSurface(ctx, 7, camX, camY, '#CBD5E1', '#F1F5F9', '#64748B');
+      drawSlopedStrip(ctx, 7, camX, camY, camX, FLOOR_MIN_Y + 9, VIRTUAL_W, 11, '#334155');
       const bScroll = Math.floor(time * 75) % 24;
       for (let x = -24; x < VIRTUAL_W + 24; x += 24) {
         const crateWorldX = camX + x - bScroll + 12;
-        drawSlopedStrip(ctx, 6, camX, camY, crateWorldX, FLOOR_MIN_Y + 11, 8, 7, '#22C55E');
-        drawSlopedStrip(ctx, 6, camX, camY, crateWorldX + 2, FLOOR_MIN_Y + 10, 4, 2, '#ECFCCB');
+        drawSlopedStrip(ctx, 7, camX, camY, crateWorldX, FLOOR_MIN_Y + 11, 8, 7, '#22C55E');
+        drawSlopedStrip(ctx, 7, camX, camY, crateWorldX + 2, FLOOR_MIN_Y + 10, 4, 2, '#ECFCCB');
       }
     }
   }
@@ -5631,6 +6551,16 @@ const CUTSCENE_LAYOUTS: Record<CutsceneDef['sceneTheme'], CutscenePlacement[]> =
     { id: 'zavod_killer', x: 64, y: 192, defaultFacing: 1 },
     { id: 'koren', x: 410, y: 220, defaultFacing: -1 },
   ],
+  rooftop_drones: [
+    { id: 'koren', x: 186, y: 186, defaultFacing: 1 }, // standing beside combat quadcopters!
+    { id: 'bo', x: 244, y: 178, defaultFacing: -1 },
+    { id: 'vadek', x: 118, y: 214, defaultFacing: 1 },
+    { id: 'zavod_killer', x: 162, y: 238, defaultFacing: 1 },
+    { id: 'vano', x: 298, y: 204, defaultFacing: -1 },
+    { id: 'hooper', x: 344, y: 232, defaultFacing: -1 },
+    { id: 'sandro', x: 74, y: 240, defaultFacing: 1 },
+    { id: 'ded', x: 404, y: 216, defaultFacing: -1 },
+  ],
   factory_gate: [
     { id: 'bo', x: 274, y: 174, defaultFacing: 1 }, // hunched right near gate terminal!
     { id: 'koren', x: 226, y: 188, defaultFacing: 1 },
@@ -5686,6 +6616,10 @@ export function drawCutsceneScene(
   if (cutscene.sceneTheme === 'city_dawn') {
     grad.addColorStop(0, isEpilogue ? '#312E81' : '#1B1938');
     grad.addColorStop(0.55, isEpilogue ? '#EA580C' : '#9A3412');
+    grad.addColorStop(1, '#1E293B');
+  } else if (cutscene.sceneTheme === 'rooftop_drones') {
+    grad.addColorStop(0, '#060B1E');
+    grad.addColorStop(0.55, '#11264D');
     grad.addColorStop(1, '#1E293B');
   } else {
     grad.addColorStop(0, '#080C14');
@@ -5781,6 +6715,37 @@ export function drawCutsceneScene(
         ctx.fill();
       }
     }
+  } else if (cutscene.sceneTheme === 'rooftop_drones') {
+    // Rooftop overlooking the sparking 10kV electrified factory fence & substation!
+    // Concrete rooftop parapet along background edge
+    box(ctx, 0, 128, VIRTUAL_W, 18, '#334155', '#64748B', INK);
+    // Distant electrified factory fence & glowing 10kV substation silhouette on right horizon
+    for (let x = 22; x < 350; x += 28) {
+      px(ctx, x, 72, 3, 56, '#475569');
+      if (Math.floor(time * 12 + x) % 3 === 0) {
+        ctx.strokeStyle = '#00E5FF';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(x + 2, 82);
+        ctx.lineTo(x + 14, 78 + Math.sin(time * 36 + x) * 5);
+        ctx.lineTo(x + 28, 84);
+        ctx.stroke();
+      }
+    }
+    px(ctx, 22, 84, 326, 1.8, 'rgba(0, 229, 255, 0.7)');
+    px(ctx, 22, 102, 326, 1.8, 'rgba(0, 229, 255, 0.55)');
+    // Distant substation tower glowing cyan on the skyline
+    box(ctx, 294, 58, 46, 70, '#1E293B', '#38BDF8', INK);
+    px(ctx, 304, 70, 8, 22, '#00E5FF');
+    px(ctx, 322, 70, 8, 22, '#00E5FF');
+    box(ctx, 300, 98, 34, 12, '#FACC15', '#FEF08A', '#854D0E');
+    ctx.fillStyle = '#090C11';
+    ctx.font = 'bold 6px monospace';
+    ctx.fillText('10kV', 309, 106);
+
+    // Launch pad on rooftop for Koren's SINGLE armed unmanned combat quadcopter!
+    box(ctx, 186, 146, 56, 8, '#1E293B', '#38BDF8', INK);
+    px(ctx, 194, 149, 40, 2, '#FACC15');
   } else if (cutscene.sceneTheme === 'factory_gate') {
     const gateOpen = isEpilogue ? Math.min(48, epilogueTime * 36) : 0;
     for (let x = 20; x < 360; x += 28) {
@@ -5864,6 +6829,10 @@ export function drawCutsceneScene(
           facing = 1;
           meleeTimer = (Math.sin(time * 16) > 0 && epilogueTime < 1.3) ? 0.14 : 0;
         }
+      } else if (cutscene.sceneTheme === 'rooftop_drones') {
+        // All 8 heroes stay on the rooftop watching as ONE single combat quadcopter takes off!
+        facing = 1;
+        moving = false;
       } else if (cutscene.sceneTheme === 'factory_gate') {
         moving = epilogueTime > 0.5;
         hx += Math.max(0, epilogueTime - 0.5) * 32;
@@ -5924,11 +6893,51 @@ export function drawCutsceneScene(
     } else if (h.id === 'vano' && !onBikes && !isEpilogue) {
       const ballY = Math.abs(Math.sin(time * 6)) * 16;
       drawInkEllipse(ctx, hx + facing * 15, hy - 6 - ballY, 3.6, 3.6, 0, '#F8FAFC', '#FFFFFF', '#94A3B8', 0.9);
-    } else if (h.id === 'koren' && !onBikes && !isEpilogue) {
+    } else if (h.id === 'koren' && !onBikes && !isEpilogue && cutscene.sceneTheme !== 'rooftop_drones') {
       const rcX = hx + Math.sin(time * 3) * 16;
       drawRoundedRect(ctx, rcX - 6, hy + 1, 12, 5.5, 1.4, '#00E5FF', INK, 0.9);
       drawInkEllipse(ctx, rcX - 4, hy + 6.5, 2, 2, 0, '#0F172A', undefined, undefined, 0);
       drawInkEllipse(ctx, rcX + 4, hy + 6.5, 2, 2, 0, '#0F172A', undefined, undefined, 0);
+    }
+  }
+
+  // Rooftop Drone Cutscene: ONE single unmanned combat quadcopter lifts off and streaks toward the factory!
+  if (cutscene.sceneTheme === 'rooftop_drones') {
+    const flyT = isEpilogue ? Math.max(0, epilogueTime - 0.25) : 0;
+    const droneX = 214 + flyT * flyT * 42 + flyT * 118;
+    const droneY = isEpilogue
+      ? 148 - Math.min(82, flyT * 64) - Math.sin(time * 8) * 2.5
+      : 148;
+    const testFire = isEpilogue && flyT > 0.45 && flyT < 0.72;
+
+    drawHeroSprite(ctx, {
+      heroId: 'koren',
+      x: droneX,
+      y: droneY,
+      z: 0,
+      facing: 1,
+      aimX: 1,
+      aimY: 0,
+      animTime: isEpilogue ? time * 1.4 : time * 0.35,
+      moving: isEpilogue,
+      meleeTimer: 0,
+      shootTimer: testFire ? 0.1 : 0,
+      hurtTimer: 0,
+      invulnTimer: 0,
+      weaponId: 'spinning',
+      onBike: false,
+      onQuadcopter: true,
+      quadTilt: isEpilogue ? Math.min(0.18, flyT * 0.26) : 0,
+      scale: 0.96,
+    });
+
+    // Twin test plasma bolts streaking ahead of the solo drone on takeoff!
+    if (isEpilogue && flyT > 0.45) {
+      const boltDx = (flyT - 0.45) * 320;
+      if (droneX + 20 + boltDx < VIRTUAL_W + 40) {
+        px(ctx, droneX + 20 + boltDx, droneY - 12, 12, 2.2, '#38BDF8');
+        px(ctx, droneX + 24 + boltDx, droneY - 7, 12, 2.2, '#FEF08A');
+      }
     }
   }
 }

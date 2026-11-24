@@ -32,7 +32,7 @@ export type WeaponId =
   | 'firewall'
   | 'dymok';
 
-export type LevelId = 1 | 2 | 3 | 4 | 5 | 6;
+export type LevelId = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 export type EnemyKind =
   | 'drunk'
@@ -42,11 +42,15 @@ export type EnemyKind =
   | 'guard_shield'
   | 'turret'
   | 'drone'
+  | 'mini_heli'
+  | 'heavy_heli'
   | 'biker'
   | 'beer_truck'
   | 'elite'
   | 'boss_drunk'
   | 'boss_buffalo'
+  | 'boss_electrician'
+  | 'boss_substation'
   | 'boss_chief'
   | 'boss_caravan'
   | 'boss_elevator'
@@ -172,14 +176,14 @@ export interface LevelDef {
   name: string;
   shortName: string;
   location: string;
-  mode: 'beatemup' | 'highway' | 'elevator';
+  mode: 'beatemup' | 'flight' | 'highway' | 'elevator';
   length: number;
   checkpointX: number;
   checkpoints: number[];
   bossKind: EnemyKind;
   bossName: string;
   bossSubtitle: string;
-  musicTrack: 'level1' | 'level2' | 'level3' | 'level4' | 'elevator' | 'level5';
+  musicTrack: 'level1' | 'level2' | 'sky_raid' | 'level3' | 'level4' | 'elevator' | 'level5';
   skyTop: string;
   skyBottom: string;
   accentColor: string;
@@ -199,7 +203,14 @@ export interface CutsceneDef {
   levelId: LevelId | 'victory';
   title: string;
   locationLabel: string;
-  sceneTheme: 'van_street' | 'market_crates' | 'factory_gate' | 'highway_bikes' | 'factory_lift' | 'city_dawn';
+  sceneTheme:
+    | 'van_street'
+    | 'market_crates'
+    | 'rooftop_drones'
+    | 'factory_gate'
+    | 'highway_bikes'
+    | 'factory_lift'
+    | 'city_dawn';
   epilogueAction: string;
   lines: CutsceneLine[];
 }
@@ -275,7 +286,7 @@ export interface HudSnapshot {
   levelId: LevelId;
   levelName: string;
   difficulty: DifficultyId;
-  mode: 'beatemup' | 'highway' | 'elevator';
+  mode: 'beatemup' | 'flight' | 'highway' | 'elevator';
   elevatorFloor?: number;
   totalScore: number;
   continuesLeft: number;

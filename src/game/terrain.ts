@@ -11,16 +11,17 @@ export function tileHash(idx: number, seed: number): number {
 }
 
 /**
- * Alternating dark/light visual themes:
+ * Alternating dark/light visual themes across all 7 stages:
  * Level 1: Dark (Night neon streets)
  * Level 2: Light (Sunny daytime street market & waterfront)
- * Level 3: Dark (Night factory perimeter)
- * Level 4: Light (Sunny daytime coastal highway)
- * Level 5: Dark (Night freight elevator shaft)
- * Level 6: Light (Bright daylight glass factory atrium & sunlit penthouse)
+ * Level 3: Dark (Electric storm twilight flight over city rooftops)
+ * Level 4: Dark (Night factory perimeter)
+ * Level 5: Light (Sunny daytime coastal highway)
+ * Level 6: Dark (Night freight elevator shaft)
+ * Level 7: Light (Bright daylight glass factory atrium & sunlit penthouse)
  */
 export function isDaylightLevel(levelId: LevelId): boolean {
-  return levelId === 2 || levelId === 4 || levelId === 6;
+  return levelId === 2 || levelId === 5 || levelId === 7;
 }
 
 // Steep Contra: Hard Corps-style piecewise-linear elevation profiles!
@@ -43,7 +44,7 @@ function createSeededRng(seed: number): () => number {
  * (1200–2650px) and only 2–4 dramatic steep ramps across the whole level.
  */
 function buildSparseRandomRamps(levelId: LevelId, levelLength: number, seed: number): RampNode[] {
-  if (levelId === 5) {
+  if (levelId === 3 || levelId === 6) {
     return [
       [0, 0],
       [Math.max(1000, levelLength), 0],
@@ -104,19 +105,21 @@ function buildSparseRandomRamps(levelId: LevelId, levelLength: number, seed: num
 const DEFAULT_LEVEL_LENGTHS: Record<LevelId, number> = {
   1: 7600,
   2: 8200,
-  3: 8400,
-  4: 10200,
-  5: 1000,
-  6: 9000,
+  3: 6800,
+  4: 8600,
+  5: 10200,
+  6: 1000,
+  7: 9000,
 };
 
 const activeRampProfiles: Record<LevelId, RampNode[]> = {
   1: buildSparseRandomRamps(1, DEFAULT_LEVEL_LENGTHS[1], 104729),
   2: buildSparseRandomRamps(2, DEFAULT_LEVEL_LENGTHS[2], 224737),
-  3: buildSparseRandomRamps(3, DEFAULT_LEVEL_LENGTHS[3], 350377),
-  4: buildSparseRandomRamps(4, DEFAULT_LEVEL_LENGTHS[4], 479909),
-  5: buildSparseRandomRamps(5, DEFAULT_LEVEL_LENGTHS[5], 500009),
-  6: buildSparseRandomRamps(6, DEFAULT_LEVEL_LENGTHS[6], 611953),
+  3: buildSparseRandomRamps(3, DEFAULT_LEVEL_LENGTHS[3], 314159),
+  4: buildSparseRandomRamps(4, DEFAULT_LEVEL_LENGTHS[4], 350377),
+  5: buildSparseRandomRamps(5, DEFAULT_LEVEL_LENGTHS[5], 479909),
+  6: buildSparseRandomRamps(6, DEFAULT_LEVEL_LENGTHS[6], 500009),
+  7: buildSparseRandomRamps(7, DEFAULT_LEVEL_LENGTHS[7], 611953),
 };
 
 /**
@@ -134,7 +137,7 @@ export function randomizeLevelTerrain(levelId: LevelId, levelLength: number, see
  * Negative values = uphill (higher), positive values = downhill (lower).
  */
 export function getGroundElevation(levelId: LevelId, worldX: number): number {
-  if (levelId === 5) return 0;
+  if (levelId === 3 || levelId === 6) return 0;
   const nodes = activeRampProfiles[levelId];
   if (!nodes || nodes.length < 2) return 0;
 
@@ -161,7 +164,7 @@ export function getGroundElevation(levelId: LevelId, worldX: number): number {
  * Deterministic purely from (levelId, camX) so Online 2P guests stay 100% synced automatically.
  */
 export function getCameraOffsetY(levelId: LevelId, camX: number): number {
-  if (levelId === 5) return 0;
+  if (levelId === 3 || levelId === 6) return 0;
   const e1 = getGroundElevation(levelId, camX + 120);
   const e2 = getGroundElevation(levelId, camX + 185);
   const e3 = getGroundElevation(levelId, camX + 250);
@@ -172,7 +175,7 @@ export function getCameraOffsetY(levelId: LevelId, camX: number): number {
  * Local slope angle in radians at `worldX` (positive = descending right, negative = climbing right).
  */
 export function getGroundSlope(levelId: LevelId, worldX: number): number {
-  if (levelId === 5) return 0;
+  if (levelId === 3 || levelId === 6) return 0;
   const e1 = getGroundElevation(levelId, worldX - 10);
   const e2 = getGroundElevation(levelId, worldX + 10);
   return Math.atan2(e2 - e1, 20);

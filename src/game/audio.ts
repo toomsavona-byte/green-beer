@@ -1,477 +1,7 @@
 import { WeaponId } from './types';
+import { MusicTrack, TRACKS, TrackPattern, TrackSection } from './musicTracks';
 
-export type MusicTrack =
-  | 'none'
-  | 'title'
-  | 'cutscene'
-  | 'level1'
-  | 'level2'
-  | 'level3'
-  | 'level4'
-  | 'elevator'
-  | 'level5'
-  | 'boss'
-  | 'victory'
-  | 'synthwave';
-
-// Drum grid tokens per 16th-note step:
-// K = Hardcore Sub-Kick, S = Crunchy Sega DAC Snare, g = Amen Ghost Snare,
-// H = Closed Hat, O = Open Hat, C = Crash/Drop Hit, T = Industrial Tom, M = Metallic Anvil/Clang
-interface TrackPattern {
-  bpm: number;
-  bassA: number[]; // 32 steps (Bars 1-2)
-  bassB: number[]; // 32 steps (Bars 3-4 — heavier variation / octave lift / breakdown)
-  acidAccent: number[]; // 32 steps: 1 = squelchy resonant 303 accent
-  leadA: number[]; // 32 steps (Bars 1-2)
-  leadB: number[]; // 32 steps (Bars 3-4 — screaming Contra Hard Corps / Prodigy climax)
-  stab: number[]; // 32 steps, root MIDI note for 90s Genesis rave power-chord stab or 0
-  drumsA: string[]; // 32 steps
-  drumsB: string[]; // 32 steps (heavier fills, double kicks, Amen snare rolls)
-  muffled?: boolean;
-  acidQ?: number;
-  leadType?: 'hoover' | 'fm_shred' | 'siren';
-  drive?: number;
-  isSynthwave?: boolean;
-  padChords?: number[][]; // 4 bar chords for endless Synthwave Juno pads
-}
-
-const TRACKS: Record<Exclude<MusicTrack, 'none'>, TrackPattern> = {
-  title: {
-    // 154 BPM Prodigy "Breathe / Firestarter" × Contra Hard Corps dark anthem
-    bpm: 154,
-    bassA: [
-      36, 36, 48, 39, 36, 36, 43, 42, 36, 36, 41, 39, 36, 48, 46, 43,
-      36, 36, 48, 39, 41, 42, 43, 46, 36, 36, 48, 46, 43, 42, 41, 39,
-    ],
-    bassB: [
-      36, 48, 36, 39, 42, 36, 43, 48, 36, 48, 41, 42, 43, 46, 48, 51,
-      36, 36, 51, 48, 46, 43, 42, 39, 36, 48, 46, 43, 42, 41, 39, 38,
-    ],
-    acidAccent: [
-      1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 0,
-      1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1,
-    ],
-    leadA: [
-      60, 0, 63, 66, 67, 0, 66, 63, 60, 0, 65, 63, 60, 0, 58, 60,
-      60, 63, 66, 67, 70, 0, 67, 66, 63, 60, 72, 0, 70, 67, 66, 63,
-    ],
-    leadB: [
-      72, 0, 75, 78, 79, 78, 75, 72, 72, 75, 77, 75, 72, 70, 67, 70,
-      72, 75, 78, 79, 82, 79, 78, 75, 72, 75, 78, 79, 84, 82, 79, 75,
-    ],
-    stab: [
-      48, 0, 0, 48, 0, 0, 51, 0, 0, 0, 54, 0, 0, 0, 51, 0,
-      48, 0, 0, 48, 0, 0, 55, 0, 54, 0, 51, 0, 54, 0, 55, 0,
-    ],
-    drumsA: [
-      'KC', 'H', 'KH', 'g', 'SH', 'K', 'KO', 'gH', 'KH', 'gH', 'KH', 'H', 'SH', 'K', 'KO', 'g',
-      'KH', 'H', 'KH', 'g', 'SH', 'K', 'KH', 'H', 'KO', 'g', 'KH', 'M', 'S', 'T', 'S', 'KT',
-    ],
-    drumsB: [
-      'KC', 'K', 'KH', 'g', 'SM', 'K', 'KO', 'gH', 'KH', 'K', 'KH', 'g', 'SM', 'K', 'KO', 'g',
-      'KH', 'K', 'KH', 'g', 'SH', 'K', 'KO', 'M', 'KH', 'S', 'KH', 'S', 'S', 'S', 'KT', 'KS',
-    ],
-    acidQ: 7.5,
-    leadType: 'hoover',
-    drive: 1.55,
-  },
-  cutscene: {
-    // 124 BPM dark industrial cyber-breakbeat (muffled brooding underground bass)
-    bpm: 124,
-    bassA: [
-      35, 0, 35, 0, 38, 0, 35, 0, 36, 35, 0, 35, 0, 33, 35, 0,
-      35, 0, 35, 38, 0, 41, 38, 0, 36, 35, 0, 33, 35, 0, 32, 0,
-    ],
-    bassB: [
-      35, 35, 47, 0, 38, 0, 41, 38, 36, 0, 35, 0, 33, 35, 38, 0,
-      35, 0, 47, 45, 41, 38, 36, 35, 33, 0, 35, 36, 38, 35, 33, 0,
-    ],
-    acidAccent: [
-      1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0,
-      1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0,
-    ],
-    leadA: [
-      47, 0, 0, 50, 0, 0, 48, 47, 0, 0, 0, 0, 45, 0, 47, 0,
-      47, 0, 0, 53, 0, 50, 48, 0, 47, 0, 0, 0, 45, 47, 0, 0,
-    ],
-    leadB: [
-      59, 0, 0, 62, 0, 60, 59, 0, 57, 0, 0, 59, 60, 59, 57, 0,
-      59, 0, 62, 65, 0, 62, 60, 59, 57, 0, 59, 0, 56, 57, 59, 0,
-    ],
-    stab: [
-      47, 0, 0, 0, 0, 0, 0, 0, 48, 0, 0, 0, 0, 0, 0, 0,
-      47, 0, 0, 0, 0, 0, 50, 0, 0, 0, 0, 0, 45, 0, 0, 0,
-    ],
-    drumsA: [
-      'KH', 'H', 'KH', 'H', 'SH', 'H', 'H', 'gH', 'KH', 'H', 'KO', 'H', 'SH', 'H', 'H', 'g',
-      'KH', 'H', 'KH', 'H', 'SH', 'H', 'KH', 'g', 'KH', 'H', 'KO', 'H', 'SH', 'g', 'T', 'S',
-    ],
-    drumsB: [
-      'KC', 'H', 'KH', 'g', 'SH', 'H', 'KH', 'gH', 'KH', 'H', 'KO', 'g', 'SH', 'H', 'KH', 'g',
-      'KH', 'H', 'KH', 'g', 'SH', 'H', 'KO', 'g', 'KH', 'g', 'KH', 'H', 'S', 'T', 'S', 'KT',
-    ],
-    muffled: true,
-    acidQ: 5.0,
-    leadType: 'hoover',
-    drive: 1.25,
-  },
-  level1: {
-    // 160 BPM Contra: Hard Corps Stage 1 ("The Hard Corps") Genesis Rave-Metal Assault!
-    bpm: 160,
-    bassA: [
-      38, 38, 50, 38, 41, 38, 45, 38, 44, 38, 41, 38, 40, 38, 45, 44,
-      38, 38, 50, 38, 41, 44, 45, 48, 45, 44, 41, 40, 38, 40, 41, 45,
-    ],
-    bassB: [
-      38, 50, 38, 50, 41, 53, 44, 45, 38, 50, 48, 45, 44, 41, 40, 38,
-      38, 50, 48, 45, 44, 45, 48, 50, 53, 50, 48, 45, 44, 41, 40, 38,
-    ],
-    acidAccent: [
-      1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1,
-      1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1,
-    ],
-    leadA: [
-      62, 65, 69, 62, 74, 0, 72, 69, 68, 65, 62, 65, 68, 69, 74, 0,
-      74, 72, 69, 68, 69, 72, 74, 77, 74, 72, 69, 68, 65, 68, 69, 65,
-    ],
-    leadB: [
-      74, 77, 81, 74, 86, 84, 81, 77, 80, 77, 74, 77, 80, 81, 86, 81,
-      86, 84, 81, 80, 81, 84, 86, 89, 86, 84, 81, 80, 77, 74, 72, 69,
-    ],
-    stab: [
-      50, 0, 0, 50, 0, 0, 53, 0, 56, 0, 55, 0, 0, 0, 53, 0,
-      50, 0, 50, 0, 0, 0, 57, 0, 56, 0, 55, 0, 53, 0, 57, 56,
-    ],
-    drumsA: [
-      'KC', 'H', 'KH', 'g', 'SH', 'K', 'KH', 'gH', 'KO', 'gH', 'KH', 'H', 'SH', 'K', 'KH', 'g',
-      'KH', 'H', 'KH', 'g', 'SH', 'K', 'KO', 'H', 'KH', 'g', 'KH', 'M', 'S', 'S', 'T', 'KT',
-    ],
-    drumsB: [
-      'KC', 'K', 'KH', 'g', 'SM', 'K', 'KO', 'gH', 'KH', 'K', 'KH', 'g', 'SM', 'K', 'KO', 'g',
-      'KH', 'K', 'KH', 'K', 'SH', 'K', 'KO', 'M', 'KH', 'S', 'KH', 'S', 'S', 'S', 'KT', 'KS',
-    ],
-    acidQ: 7.5,
-    leadType: 'fm_shred',
-    drive: 1.65,
-  },
-  level2: {
-    // 164 BPM Prodigy "Voodoo People / Poison" Acid Breakbeat Rave!
-    bpm: 164,
-    bassA: [
-      40, 40, 52, 40, 43, 40, 46, 47, 40, 40, 52, 50, 47, 46, 43, 42,
-      40, 40, 52, 40, 46, 47, 50, 52, 47, 46, 43, 40, 43, 46, 47, 50,
-    ],
-    bassB: [
-      40, 52, 40, 43, 46, 47, 52, 47, 40, 52, 50, 47, 46, 43, 42, 40,
-      40, 52, 55, 52, 50, 47, 46, 43, 40, 43, 46, 47, 50, 52, 55, 52,
-    ],
-    acidAccent: [
-      1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1,
-      1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1,
-    ],
-    leadA: [
-      64, 67, 70, 71, 64, 76, 71, 70, 67, 64, 67, 70, 71, 74, 71, 67,
-      76, 74, 71, 70, 71, 74, 76, 79, 76, 74, 71, 70, 67, 70, 71, 74,
-    ],
-    leadB: [
-      76, 79, 82, 83, 76, 88, 83, 82, 79, 76, 79, 82, 83, 86, 83, 79,
-      88, 86, 83, 82, 83, 86, 88, 91, 88, 86, 83, 82, 79, 76, 74, 71,
-    ],
-    stab: [
-      52, 0, 0, 52, 0, 0, 55, 0, 58, 0, 55, 0, 57, 0, 55, 0,
-      52, 0, 52, 0, 55, 0, 58, 0, 59, 0, 58, 0, 55, 0, 59, 0,
-    ],
-    drumsA: [
-      'KC', 'H', 'KH', 'g', 'SH', 'K', 'KO', 'gH', 'H', 'KH', 'KH', 'g', 'SH', 'K', 'KO', 'g',
-      'KH', 'g', 'KH', 'H', 'SH', 'K', 'KH', 'g', 'KO', 'g', 'KH', 'M', 'S', 'g', 'S', 'KT',
-    ],
-    drumsB: [
-      'KC', 'K', 'KH', 'g', 'SM', 'K', 'KO', 'gH', 'KH', 'g', 'KH', 'K', 'SM', 'g', 'KO', 'g',
-      'KH', 'K', 'KH', 'g', 'SH', 'K', 'KO', 'g', 'KH', 'S', 'KH', 'S', 'S', 'S', 'KT', 'KS',
-    ],
-    acidQ: 8.5,
-    leadType: 'hoover',
-    drive: 1.75,
-  },
-  level3: {
-    // 170 BPM Industrial Cyberpunk Hardcore Techno (GTR Attack! / Factory Assault)
-    bpm: 170,
-    bassA: [
-      36, 36, 48, 36, 42, 36, 43, 36, 39, 36, 48, 46, 43, 42, 39, 38,
-      36, 36, 48, 36, 43, 42, 39, 36, 48, 46, 43, 42, 43, 46, 48, 51,
-    ],
-    bassB: [
-      36, 48, 36, 42, 43, 36, 48, 42, 36, 48, 51, 48, 46, 43, 42, 39,
-      36, 36, 48, 42, 43, 46, 48, 51, 54, 51, 48, 46, 43, 42, 39, 36,
-    ],
-    acidAccent: [
-      1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1,
-      1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    ],
-    leadA: [
-      60, 63, 66, 67, 60, 72, 67, 66, 63, 60, 72, 70, 67, 66, 63, 60,
-      72, 70, 67, 66, 67, 70, 72, 75, 72, 70, 67, 66, 63, 62, 60, 58,
-    ],
-    leadB: [
-      72, 75, 78, 79, 72, 84, 79, 78, 75, 72, 84, 82, 79, 78, 75, 72,
-      84, 82, 79, 78, 79, 82, 84, 87, 84, 82, 79, 78, 75, 74, 72, 70,
-    ],
-    stab: [
-      48, 0, 48, 0, 0, 0, 54, 0, 48, 0, 51, 0, 0, 0, 54, 0,
-      48, 0, 48, 0, 54, 0, 55, 0, 54, 0, 51, 0, 54, 0, 55, 54,
-    ],
-    drumsA: [
-      'KC', 'H', 'KH', 'K', 'SM', 'K', 'KH', 'H', 'KH', 'K', 'KO', 'H', 'SM', 'g', 'KH', 'H',
-      'KH', 'H', 'KH', 'K', 'SM', 'K', 'KO', 'H', 'KH', 'K', 'SH', 'K', 'S', 'T', 'S', 'KT',
-    ],
-    drumsB: [
-      'KC', 'K', 'KH', 'K', 'SM', 'K', 'KO', 'K', 'KH', 'K', 'KM', 'K', 'SM', 'K', 'KO', 'g',
-      'KC', 'K', 'KH', 'K', 'SM', 'K', 'KO', 'K', 'KH', 'S', 'KM', 'S', 'S', 'S', 'KT', 'KS',
-    ],
-    acidQ: 8.0,
-    leadType: 'siren',
-    drive: 1.85,
-  },
-  level4: {
-    // 180 BPM Turbo Highway Jungle / Drum'n'Bass Contra Rave!
-    bpm: 180,
-    bassA: [
-      41, 41, 53, 41, 44, 41, 48, 41, 47, 41, 53, 51, 48, 47, 44, 43,
-      41, 41, 53, 41, 48, 51, 53, 56, 53, 51, 48, 47, 44, 47, 48, 53,
-    ],
-    bassB: [
-      41, 53, 41, 53, 44, 56, 48, 53, 47, 41, 53, 51, 48, 47, 44, 41,
-      41, 53, 56, 53, 51, 48, 47, 44, 41, 44, 47, 48, 51, 53, 56, 60,
-    ],
-    acidAccent: [
-      1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0,
-      1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1,
-    ],
-    leadA: [
-      65, 68, 72, 77, 75, 72, 68, 72, 71, 72, 75, 77, 80, 77, 75, 72,
-      77, 75, 72, 68, 72, 75, 77, 80, 82, 80, 77, 75, 72, 75, 77, 80,
-    ],
-    leadB: [
-      77, 80, 84, 89, 87, 84, 80, 84, 83, 84, 87, 89, 92, 89, 87, 84,
-      89, 87, 84, 80, 84, 87, 89, 92, 94, 92, 89, 87, 84, 80, 77, 75,
-    ],
-    stab: [
-      53, 0, 0, 53, 0, 0, 56, 0, 59, 0, 58, 0, 0, 0, 60, 0,
-      53, 0, 53, 0, 56, 0, 60, 0, 59, 0, 58, 0, 56, 0, 60, 59,
-    ],
-    drumsA: [
-      'KC', 'H', 'KH', 'g', 'SH', 'H', 'KO', 'gH', 'H', 'KH', 'KO', 'g', 'SH', 'K', 'KH', 'g',
-      'KH', 'H', 'KH', 'g', 'SH', 'K', 'KO', 'g', 'KH', 'g', 'KH', 'g', 'S', 'S', 'T', 'KT',
-    ],
-    drumsB: [
-      'KC', 'g', 'KH', 'g', 'SM', 'K', 'KO', 'gH', 'KH', 'g', 'KO', 'g', 'SM', 'g', 'KH', 'g',
-      'KH', 'K', 'KH', 'g', 'SH', 'g', 'KO', 'M', 'KH', 'S', 'g', 'S', 'S', 'S', 'KT', 'KS',
-    ],
-    acidQ: 8.0,
-    leadType: 'fm_shred',
-    drive: 1.75,
-  },
-  elevator: {
-    // 176 BPM High-Speed Vertical Freight Elevator Industrial Drum'n'Bass Assault!
-    bpm: 176,
-    bassA: [
-      37, 37, 49, 37, 40, 37, 43, 44, 37, 37, 49, 47, 44, 43, 40, 39,
-      37, 37, 49, 37, 44, 47, 49, 52, 49, 47, 44, 43, 40, 43, 44, 49,
-    ],
-    bassB: [
-      37, 49, 37, 43, 44, 37, 49, 43, 37, 49, 52, 49, 47, 44, 43, 40,
-      37, 37, 49, 44, 47, 49, 52, 55, 52, 49, 47, 44, 43, 40, 39, 37,
-    ],
-    acidAccent: [
-      1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1,
-      1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1,
-    ],
-    leadA: [
-      61, 64, 67, 68, 61, 73, 68, 67, 64, 61, 73, 71, 68, 67, 64, 61,
-      73, 71, 68, 67, 68, 71, 73, 76, 73, 71, 68, 67, 64, 67, 68, 71,
-    ],
-    leadB: [
-      73, 76, 79, 80, 73, 85, 80, 79, 76, 73, 85, 83, 80, 79, 76, 73,
-      85, 83, 80, 79, 80, 83, 85, 88, 85, 83, 80, 79, 76, 73, 71, 68,
-    ],
-    stab: [
-      49, 0, 0, 49, 0, 0, 52, 0, 55, 0, 52, 0, 0, 0, 56, 0,
-      49, 0, 49, 0, 55, 0, 56, 0, 55, 0, 52, 0, 55, 0, 56, 55,
-    ],
-    drumsA: [
-      'KC', 'H', 'KH', 'g', 'SM', 'K', 'KO', 'g', 'KH', 'g', 'KM', 'H', 'SM', 'K', 'KO', 'g',
-      'KH', 'H', 'KH', 'K', 'SM', 'K', 'KO', 'g', 'KH', 'K', 'SM', 'g', 'S', 'T', 'S', 'KT',
-    ],
-    drumsB: [
-      'KC', 'K', 'KM', 'g', 'SM', 'K', 'KO', 'g', 'KH', 'K', 'KM', 'K', 'SM', 'K', 'KO', 'g',
-      'KC', 'K', 'KH', 'K', 'SM', 'K', 'KO', 'K', 'KM', 'S', 'KH', 'S', 'S', 'S', 'KT', 'KS',
-    ],
-    acidQ: 8.2,
-    leadType: 'siren',
-    drive: 1.85,
-  },
-  level5: {
-    // 174 BPM Dark Factory Penthouse Hardcore Gabber-Metal Rave
-    bpm: 174,
-    bassA: [
-      34, 34, 46, 34, 37, 34, 40, 41, 34, 34, 46, 44, 41, 40, 37, 36,
-      34, 34, 46, 34, 41, 40, 37, 34, 46, 44, 41, 40, 41, 44, 46, 49,
-    ],
-    bassB: [
-      34, 46, 34, 40, 41, 34, 46, 40, 34, 46, 49, 46, 44, 41, 40, 37,
-      34, 34, 46, 40, 41, 44, 46, 49, 52, 49, 46, 44, 41, 40, 37, 34,
-    ],
-    acidAccent: [
-      1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1,
-      1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1,
-    ],
-    leadA: [
-      58, 61, 65, 64, 61, 58, 65, 68, 70, 68, 65, 64, 61, 60, 58, 61,
-      70, 68, 65, 64, 65, 68, 70, 73, 76, 73, 70, 68, 65, 64, 61, 58,
-    ],
-    leadB: [
-      70, 73, 77, 76, 73, 70, 77, 80, 82, 80, 77, 76, 73, 72, 70, 73,
-      82, 80, 77, 76, 77, 80, 82, 85, 88, 85, 82, 80, 77, 76, 73, 70,
-    ],
-    stab: [
-      46, 0, 46, 0, 0, 0, 52, 0, 46, 0, 49, 0, 0, 0, 52, 0,
-      46, 0, 46, 0, 52, 0, 53, 0, 52, 0, 49, 0, 52, 0, 53, 52,
-    ],
-    drumsA: [
-      'KC', 'H', 'KH', 'K', 'SM', 'K', 'KO', 'g', 'KH', 'K', 'KH', 'g', 'SM', 'K', 'KH', 'H',
-      'KH', 'K', 'KH', 'K', 'SH', 'K', 'KO', 'K', 'KH', 'K', 'SH', 'K', 'S', 'S', 'T', 'KT',
-    ],
-    drumsB: [
-      'KC', 'K', 'KM', 'K', 'SM', 'K', 'KO', 'K', 'KH', 'K', 'KM', 'K', 'SM', 'K', 'KO', 'K',
-      'KC', 'K', 'KH', 'K', 'SM', 'K', 'KO', 'K', 'KM', 'S', 'KH', 'S', 'S', 'S', 'KT', 'KS',
-    ],
-    acidQ: 8.2,
-    leadType: 'hoover',
-    drive: 1.9,
-  },
-  boss: {
-    // 182 BPM PURE CONTRA HARD CORPS ("Last Springsteen") × PRODIGY "SMACK MY BITCH UP / FIRESTARTER" BOSS FURY!
-    bpm: 182,
-    bassA: [
-      33, 33, 45, 34, 33, 39, 33, 36, 33, 33, 45, 44, 40, 39, 36, 34,
-      33, 33, 45, 34, 39, 40, 45, 48, 45, 44, 40, 39, 36, 39, 40, 44,
-    ],
-    bassB: [
-      33, 45, 34, 46, 33, 45, 39, 45, 33, 45, 48, 45, 44, 40, 39, 36,
-      33, 33, 45, 46, 48, 51, 52, 48, 45, 44, 40, 39, 36, 34, 33, 39,
-    ],
-    acidAccent: [
-      1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    ],
-    leadA: [
-      69, 72, 75, 76, 75, 72, 70, 69, 81, 80, 76, 75, 72, 70, 69, 64,
-      69, 75, 76, 81, 80, 76, 75, 72, 81, 84, 83, 81, 80, 76, 75, 72,
-    ],
-    leadB: [
-      81, 84, 87, 88, 87, 84, 82, 81, 93, 92, 88, 87, 84, 82, 81, 76,
-      81, 87, 88, 93, 92, 88, 87, 84, 93, 92, 88, 87, 84, 81, 76, 75,
-    ],
-    stab: [
-      45, 0, 46, 0, 45, 0, 51, 0, 45, 0, 52, 0, 51, 0, 48, 46,
-      45, 0, 46, 0, 51, 0, 52, 0, 57, 0, 52, 0, 51, 0, 48, 46,
-    ],
-    drumsA: [
-      'KC', 'K', 'KH', 'g', 'SM', 'K', 'KO', 'g', 'KH', 'K', 'KM', 'g', 'SM', 'K', 'KO', 'g',
-      'KC', 'K', 'KH', 'K', 'SM', 'K', 'KO', 'K', 'KH', 'S', 'KM', 'S', 'S', 'S', 'KT', 'KS',
-    ],
-    drumsB: [
-      'KC', 'K', 'KM', 'K', 'SM', 'K', 'KO', 'K', 'KC', 'K', 'KM', 'K', 'SM', 'K', 'KO', 'K',
-      'KC', 'K', 'KM', 'K', 'SM', 'K', 'KO', 'K', 'SM', 'S', 'SM', 'S', 'KS', 'KS', 'KT', 'KSC',
-    ],
-    acidQ: 8.5,
-    leadType: 'siren',
-    drive: 2.0,
-  },
-  victory: {
-    // 144 BPM Triumphant 16-bit Sega Rave-Funk Finale!
-    bpm: 144,
-    bassA: [
-      48, 0, 48, 52, 0, 55, 52, 55, 53, 0, 53, 55, 0, 60, 55, 52,
-      48, 0, 60, 55, 52, 55, 57, 55, 53, 55, 57, 59, 60, 0, 55, 0,
-    ],
-    bassB: [
-      48, 60, 48, 52, 55, 60, 55, 52, 53, 65, 53, 57, 60, 57, 55, 53,
-      48, 60, 55, 52, 55, 57, 59, 60, 62, 60, 59, 57, 60, 55, 52, 48,
-    ],
-    acidAccent: [
-      1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0,
-      1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0,
-    ],
-    leadA: [
-      72, 0, 76, 79, 0, 84, 79, 76, 77, 0, 79, 81, 83, 84, 79, 0,
-      84, 0, 83, 81, 79, 76, 79, 84, 86, 84, 83, 81, 84, 0, 88, 0,
-    ],
-    leadB: [
-      84, 0, 88, 91, 88, 84, 79, 84, 89, 0, 88, 84, 81, 84, 88, 0,
-      84, 88, 91, 93, 91, 88, 84, 88, 91, 89, 88, 86, 84, 0, 91, 0,
-    ],
-    stab: [
-      60, 0, 0, 0, 0, 0, 64, 0, 65, 0, 0, 0, 0, 0, 67, 0,
-      60, 0, 0, 0, 64, 0, 67, 0, 65, 0, 67, 0, 72, 0, 0, 0,
-    ],
-    drumsA: [
-      'KC', 'H', 'KH', 'H', 'SH', 'H', 'KO', 'g', 'KH', 'H', 'KH', 'H', 'SH', 'H', 'KO', 'g',
-      'KH', 'H', 'KH', 'H', 'SH', 'H', 'KO', 'H', 'KH', 'H', 'SH', 'H', 'S', 'T', 'S', 'KC',
-    ],
-    drumsB: [
-      'KC', 'H', 'KH', 'g', 'SH', 'K', 'KO', 'g', 'KH', 'H', 'KH', 'g', 'SH', 'K', 'KO', 'g',
-      'KH', 'H', 'KH', 'g', 'SH', 'K', 'KO', 'H', 'KH', 'S', 'SH', 'S', 'S', 'T', 'S', 'KSC',
-    ],
-    acidQ: 6.5,
-    leadType: 'fm_shred',
-    drive: 1.35,
-  },
-  synthwave: {
-    // 108 BPM Endless OutRun / Vice City / Malibu Sunrise Analog Synthwave
-    bpm: 108,
-    isSynthwave: true,
-    padChords: [
-      [57, 60, 64, 71], // Bar 1: Am9
-      [53, 57, 60, 64], // Bar 2: Fmaj7
-      [52, 55, 60, 62], // Bar 3: Cadd9
-      [55, 59, 62, 64], // Bar 4: G6
-    ],
-    bassA: [
-      33, 33, 45, 33, 33, 45, 33, 45, 33, 33, 45, 33, 33, 45, 36, 38,
-      41, 41, 53, 41, 41, 53, 41, 53, 41, 41, 53, 41, 41, 43, 41, 40,
-    ],
-    bassB: [
-      36, 36, 48, 36, 36, 48, 36, 48, 36, 36, 48, 36, 36, 48, 43, 40,
-      43, 43, 55, 43, 43, 55, 43, 55, 43, 43, 55, 43, 43, 40, 38, 36,
-    ],
-    acidAccent: [
-      1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,
-      1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0,
-    ],
-    leadA: [
-      76, 0, 0, 72, 0, 76, 79, 0, 76, 0, 72, 0, 71, 0, 69, 0,
-      72, 0, 0, 69, 0, 72, 76, 0, 74, 0, 72, 0, 69, 0, 67, 0,
-    ],
-    leadB: [
-      79, 0, 0, 76, 0, 79, 84, 0, 83, 0, 79, 0, 76, 0, 74, 0,
-      76, 0, 74, 0, 71, 0, 74, 0, 76, 0, 74, 71, 69, 0, 71, 0,
-    ],
-    stab: [
-      69, 72, 76, 81, 76, 72, 69, 72, 76, 81, 79, 76, 72, 76, 79, 76,
-      65, 69, 72, 77, 72, 69, 65, 69, 72, 76, 72, 69, 65, 69, 72, 76,
-    ],
-    drumsA: [
-      'KC', 'H', 'H', 'H', 'SH', 'H', 'O', 'H', 'KH', 'H', 'KH', 'H', 'SH', 'H', 'O', 'H',
-      'KH', 'H', 'H', 'H', 'SH', 'H', 'O', 'H', 'KH', 'H', 'KH', 'H', 'SH', 'H', 'O', 'H',
-    ],
-    drumsB: [
-      'KH', 'H', 'H', 'H', 'SH', 'H', 'O', 'H', 'KH', 'H', 'KH', 'H', 'SH', 'H', 'O', 'H',
-      'KH', 'H', 'H', 'H', 'SH', 'H', 'O', 'H', 'KH', 'H', 'KH', 'H', 'ST', 'T', 'T', 'KT',
-    ],
-    drive: 1.05,
-  },
-};
+export type { MusicTrack };
 
 function midiToFreq(midi: number): number {
   const f = 440 * Math.pow(2, (midi - 69) / 12);
@@ -624,6 +154,13 @@ class SoundEngine {
         this.nextNoteTime = now + 0.03;
       }
 
+      const totalSteps =
+        pattern.arrangement && pattern.arrangement.length > 0 ? pattern.arrangement.length * 32 : 64;
+      const loopResetStep =
+        pattern.arrangement && pattern.loopStart !== undefined
+          ? Math.min(pattern.loopStart * 32, Math.max(0, totalSteps - 32))
+          : 0;
+
       let scheduledThisTick = 0;
       while (this.nextNoteTime < now + 0.085 && scheduledThisTick < 2) {
         try {
@@ -632,7 +169,10 @@ class SoundEngine {
           // Ignore transient scheduler errors
         }
         this.nextNoteTime += stepDur;
-        this.stepIndex = (this.stepIndex + 1) % 64;
+        this.stepIndex++;
+        if (this.stepIndex >= totalSteps) {
+          this.stepIndex = loopResetStep;
+        }
         scheduledThisTick++;
       }
     }, 25);
@@ -646,22 +186,130 @@ class SoundEngine {
     this.currentTrack = 'none';
   }
 
-  private scheduleStep(pattern: TrackPattern, step64: number, time: number, stepDur: number): void {
+  private resolveSection(
+    pattern: TrackPattern,
+    globalStep: number
+  ): { section: TrackSection | null; step: number; isSectionB: boolean; filterMult: number } {
+    const step = globalStep % 32;
+    if (pattern.arrangement && pattern.sections && pattern.arrangement.length > 0) {
+      const arrIdx = Math.floor(globalStep / 32) % pattern.arrangement.length;
+      const key = pattern.arrangement[arrIdx];
+      const section = pattern.sections[key] ?? null;
+      if (section) {
+        const startF = section.filterMult ?? 1.0;
+        const endF = section.filterRampTo ?? startF;
+        const filterMult = startF + (endF - startF) * (step / 31);
+        return { section, step, isSectionB: Boolean(section.intense), filterMult };
+      }
+    }
+    const isSectionB = globalStep % 64 >= 32;
+    return { section: null, step, isSectionB, filterMult: isSectionB ? 1.12 : 1.0 };
+  }
+
+  private triggerSectionPad(
+    chord: number[],
+    time: number,
+    barDur: number,
+    bus: AudioNode,
+    filterMult: number,
+    gainPeak = 0.09
+  ): void {
+    if (!this.ctx || chord.length === 0) return;
+    const padFilter = this.ctx.createBiquadFilter();
+    const padEnv = this.ctx.createGain();
+    padFilter.type = 'lowpass';
+    padFilter.Q.setValueAtTime(1.2, time);
+    padFilter.frequency.setValueAtTime(clampFreq(520 * filterMult), time);
+    padFilter.frequency.exponentialRampToValueAtTime(clampFreq(1500 * filterMult), time + barDur * 0.48);
+    padFilter.frequency.exponentialRampToValueAtTime(clampFreq(640 * filterMult), time + barDur * 0.98);
+
+    padEnv.gain.setValueAtTime(0.001, time);
+    padEnv.gain.linearRampToValueAtTime(gainPeak, time + barDur * 0.14);
+    padEnv.gain.setValueAtTime(gainPeak * 0.9, time + barDur * 0.72);
+    padEnv.gain.exponentialRampToValueAtTime(0.001, time + barDur + 0.08);
+
+    padFilter.connect(padEnv);
+    padEnv.connect(bus);
+
+    const detunes = [-11, 9, -6, 13];
+    const oscs: OscillatorNode[] = [];
+    for (let i = 0; i < chord.length; i++) {
+      const o = this.ctx.createOscillator();
+      o.type = i === 0 ? 'triangle' : 'sawtooth';
+      o.frequency.setValueAtTime(midiToFreq(chord[i]), time);
+      o.detune.setValueAtTime(detunes[i % detunes.length], time);
+      o.connect(padFilter);
+      o.start(time);
+      o.stop(time + barDur + 0.12);
+      oscs.push(o);
+    }
+    if (oscs.length > 0) {
+      bindCleanup(oscs[0], [...oscs, padFilter, padEnv]);
+    }
+  }
+
+  private triggerCounterVoice(
+    midi: number,
+    time: number,
+    stepDur: number,
+    bus: AudioNode,
+    filterMult: number,
+    muffled?: boolean
+  ): void {
+    if (!this.ctx || midi <= 0) return;
+    const freq = midiToFreq(midi);
+    const osc = this.ctx.createOscillator();
+    const filter = this.ctx.createBiquadFilter();
+    const env = this.ctx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, time);
+
+    filter.type = 'lowpass';
+    filter.Q.setValueAtTime(2.2, time);
+    filter.frequency.setValueAtTime(clampFreq((muffled ? 900 : 3200) * filterMult), time);
+    filter.frequency.exponentialRampToValueAtTime(clampFreq((muffled ? 420 : 1200) * filterMult), time + stepDur * 1.3);
+
+    const dur = stepDur * 1.45;
+    env.gain.setValueAtTime(0.001, time);
+    env.gain.linearRampToValueAtTime(muffled ? 0.055 : 0.085, time + 0.008);
+    env.gain.exponentialRampToValueAtTime(0.001, time + dur);
+
+    osc.connect(filter);
+    filter.connect(env);
+    env.connect(bus);
+
+    bindCleanup(osc, [osc, filter, env]);
+    osc.start(time);
+    osc.stop(time + dur + 0.02);
+  }
+
+  private scheduleStep(pattern: TrackPattern, globalStep: number, time: number, stepDur: number): void {
     if (!this.ctx || !this.musicDrive) return;
     if (pattern.isSynthwave) {
-      this.scheduleSynthwaveStep(pattern, step64, time, stepDur);
+      this.scheduleSynthwaveStep(pattern, globalStep, time, stepDur);
       return;
     }
     const bus = this.musicDrive;
-    const isSectionB = step64 >= 32;
-    const step = step64 % 32;
+    const { section, step, isSectionB, filterMult } = this.resolveSection(pattern, globalStep);
 
-    // 1. YM2612 Slap-Metal FM + Resonant TB-303 Acid Bass + Tight Sub Punch
-    const bassSeq = isSectionB ? pattern.bassB : pattern.bassA;
-    const bassNote = bassSeq[step];
+    // 0. Optional Atmospheric Breakdown / Chorus Pad Chords (triggered on each bar start)
+    if (step % 16 === 0 && section?.padChords) {
+      const barInSec = Math.floor(step / 16) % section.padChords.length;
+      const chord = section.padChords[barInSec];
+      if (chord && chord.length > 0) {
+        this.triggerSectionPad(chord, time, stepDur * 16, bus, filterMult, pattern.muffled ? 0.05 : 0.082);
+      }
+    }
+
+    // 1. Track-Tailored 16-bit Sega Bass (Acid 303 / Slap Funk / Heavy Industrial / Galloping Rock)
+    const bassSeq = section ? section.bass : isSectionB ? pattern.bassB : pattern.bassA;
+    const bassNote = bassSeq[step] ?? 0;
+    const accentArr = section?.acidAccent ?? pattern.acidAccent;
     if (bassNote > 0) {
-      const accent = pattern.acidAccent[step] === 1;
+      const accent = accentArr[step] === 1;
       const freq = midiToFreq(bassNote);
+      const bStyle = pattern.bassStyle ?? 'acid';
 
       const osc = this.ctx.createOscillator();
       const mod = this.ctx.createOscillator();
@@ -669,25 +317,50 @@ class SoundEngine {
       const filter = this.ctx.createBiquadFilter();
       const env = this.ctx.createGain();
 
-      osc.type = 'sawtooth';
+      osc.type = bStyle === 'slap_funk' ? 'triangle' : bStyle === 'rock_gallop' ? 'square' : 'sawtooth';
       osc.frequency.setValueAtTime(freq, time);
 
-      mod.type = 'square';
-      mod.frequency.setValueAtTime(clampFreq(freq * 2), time);
-      const safeModDepth = Math.min(freq * 0.78, pattern.muffled ? 28 : accent ? 115 : 62);
+      mod.type = bStyle === 'slap_funk' ? 'sine' : 'square';
+      const modRatio = bStyle === 'slap_funk' ? 3 : bStyle === 'industrial' ? 1.5 : 2;
+      mod.frequency.setValueAtTime(clampFreq(freq * modRatio), time);
+      const safeModDepth = Math.min(
+        freq * 0.85,
+        pattern.muffled
+          ? 28
+          : bStyle === 'slap_funk'
+            ? accent
+              ? 185
+              : 75
+            : bStyle === 'rock_gallop'
+              ? 42
+              : accent
+                ? 115
+                : 62
+      );
       modGain.gain.setValueAtTime(safeModDepth, time);
-      modGain.gain.exponentialRampToValueAtTime(4, time + stepDur * 0.85);
+      modGain.gain.exponentialRampToValueAtTime(3, time + stepDur * (bStyle === 'slap_funk' ? 0.52 : 0.85));
 
       filter.type = 'lowpass';
       filter.Q.setValueAtTime(Math.min(8.5, pattern.muffled ? 3.5 : pattern.acidQ ?? 7.5), time);
-      const startCut = pattern.muffled ? 420 : accent ? 2500 : 1050;
-      const endCut = pattern.muffled ? 170 : accent ? 340 : 210;
-      filter.frequency.setValueAtTime(clampFreq(startCut), time);
-      filter.frequency.exponentialRampToValueAtTime(clampFreq(endCut), time + stepDur * 0.92);
+      const baseStartCut = pattern.muffled
+        ? 420
+        : bStyle === 'slap_funk'
+          ? accent
+            ? 3200
+            : 1400
+          : bStyle === 'rock_gallop'
+            ? 1500
+            : accent
+              ? 2500
+              : 1050;
+      const endCut = pattern.muffled ? 170 : bStyle === 'rock_gallop' ? 360 : accent ? 340 : 210;
+      filter.frequency.setValueAtTime(clampFreq(baseStartCut * filterMult), time);
+      filter.frequency.exponentialRampToValueAtTime(clampFreq(endCut * Math.max(0.7, filterMult)), time + stepDur * 0.92);
 
+      const bassDur = bStyle === 'slap_funk' ? stepDur * 0.95 : bStyle === 'industrial' ? stepDur * 1.25 : stepDur * 1.1;
       env.gain.setValueAtTime(0.001, time);
       env.gain.linearRampToValueAtTime(accent ? 0.34 : 0.25, time + 0.005);
-      env.gain.exponentialRampToValueAtTime(0.001, time + stepDur * 1.1);
+      env.gain.exponentialRampToValueAtTime(0.001, time + bassDur);
 
       mod.connect(modGain);
       modGain.connect(osc.frequency);
@@ -695,7 +368,7 @@ class SoundEngine {
       filter.connect(env);
       env.connect(bus);
 
-      const stopTime = time + stepDur * 1.15;
+      const stopTime = time + bassDur + 0.02;
       bindCleanup(osc, [osc, mod, modGain, filter, env]);
       osc.start(time);
       mod.start(time);
@@ -703,41 +376,104 @@ class SoundEngine {
       mod.stop(stopTime);
     }
 
-    // 2. Screaming Contra: Hard Corps FM Shred / Prodigy Detuned Hoover Lead
-    const leadSeq = isSectionB ? pattern.leadB : pattern.leadA;
-    const leadNote = leadSeq[step];
+    // 2. Distinct Per-Level & Per-Section Lead Synth
+    const leadSeq = section ? section.lead : isSectionB ? pattern.leadB : pattern.leadA;
+    const rawLead = leadSeq ? (leadSeq[step] ?? 0) : 0;
+    const leadNote = rawLead > 0 ? rawLead + (section?.leadOctave ?? 0) : 0;
     if (leadNote > 0) {
       const freq = midiToFreq(leadNote);
+      const lType = section?.leadType ?? pattern.leadType ?? 'fm_shred';
       const osc1 = this.ctx.createOscillator();
       const osc2 = this.ctx.createOscillator();
       const filter = this.ctx.createBiquadFilter();
       const env = this.ctx.createGain();
 
-      osc1.type = pattern.leadType === 'fm_shred' ? 'square' : 'sawtooth';
-      osc2.type = 'sawtooth';
-      osc1.frequency.setValueAtTime(freq, time);
-      osc2.frequency.setValueAtTime(freq, time);
-      osc1.detune.setValueAtTime(-14, time);
-      osc2.detune.setValueAtTime(14, time);
+      if (lType === 'funk_brass') {
+        osc1.type = 'sawtooth';
+        osc2.type = 'triangle';
+        osc1.frequency.setValueAtTime(freq, time);
+        osc2.frequency.setValueAtTime(clampFreq(freq * 0.5), time); // Warm octave-down brass body
+        osc1.detune.setValueAtTime(-7, time);
+        osc2.detune.setValueAtTime(7, time);
+      } else if (lType === 'guitar_lead') {
+        osc1.type = 'sawtooth';
+        osc2.type = 'square';
+        osc1.frequency.setValueAtTime(freq, time);
+        osc2.frequency.setValueAtTime(clampFreq(freq * 1.498), time); // Power-5th biker rock harmony!
+        osc1.detune.setValueAtTime(-6, time);
+        osc2.detune.setValueAtTime(6, time);
+      } else if (lType === 'arp_pulse') {
+        osc1.type = 'square';
+        osc2.type = 'triangle';
+        osc1.frequency.setValueAtTime(freq, time);
+        osc2.frequency.setValueAtTime(clampFreq(freq * 2), time); // Shimmering octave-up elevator chip arp
+        osc1.detune.setValueAtTime(0, time);
+        osc2.detune.setValueAtTime(5, time);
+      } else if (lType === 'organ_lead') {
+        osc1.type = 'square';
+        osc2.type = 'sawtooth';
+        osc1.frequency.setValueAtTime(freq, time);
+        osc2.frequency.setValueAtTime(clampFreq(freq * 2), time); // Gothic cathedral 16-bit FM organ
+        osc1.detune.setValueAtTime(-5, time);
+        osc2.detune.setValueAtTime(5, time);
+      } else {
+        osc1.type = lType === 'fm_shred' ? 'square' : 'sawtooth';
+        osc2.type = 'sawtooth';
+        osc1.frequency.setValueAtTime(freq, time);
+        osc2.frequency.setValueAtTime(freq, time);
+        osc1.detune.setValueAtTime(-14, time);
+        osc2.detune.setValueAtTime(14, time);
+      }
 
-      if (pattern.leadType === 'hoover' && step % 4 === 0) {
+      if (lType === 'hoover' && step % 4 === 0) {
         osc1.frequency.setValueAtTime(clampFreq(freq * 0.92), time);
         osc1.frequency.exponentialRampToValueAtTime(freq, time + stepDur * 0.45);
         osc2.frequency.setValueAtTime(clampFreq(freq * 0.92), time);
         osc2.frequency.exponentialRampToValueAtTime(freq, time + stepDur * 0.45);
-      } else if (pattern.leadType === 'siren' && step % 4 === 0) {
+      } else if (lType === 'siren' && step % 4 === 0) {
         osc1.frequency.exponentialRampToValueAtTime(clampFreq(freq * 1.045), time + stepDur * 0.5);
         osc1.frequency.exponentialRampToValueAtTime(freq, time + stepDur * 1.05);
       }
 
       filter.type = 'lowpass';
-      filter.Q.setValueAtTime(pattern.muffled ? 2 : 4.5, time);
-      filter.frequency.setValueAtTime(clampFreq(pattern.muffled ? 560 : isSectionB ? 4400 : 3500), time);
-      filter.frequency.exponentialRampToValueAtTime(clampFreq(pattern.muffled ? 280 : 1100), time + stepDur * 1.15);
+      filter.Q.setValueAtTime(
+        pattern.muffled ? 2 : lType === 'arp_pulse' ? 6.5 : lType === 'funk_brass' ? 3.2 : 4.5,
+        time
+      );
+      const leadStartCut = pattern.muffled
+        ? 560
+        : lType === 'funk_brass'
+          ? 2800
+          : lType === 'arp_pulse'
+            ? 4800
+            : isSectionB
+              ? 4400
+              : 3500;
+      const leadEndCut = pattern.muffled
+        ? 280
+        : lType === 'arp_pulse'
+          ? 900
+          : lType === 'guitar_lead'
+            ? 1750
+            : 1100;
+      filter.frequency.setValueAtTime(clampFreq(leadStartCut * filterMult), time);
+      filter.frequency.exponentialRampToValueAtTime(clampFreq(leadEndCut * Math.max(0.65, filterMult)), time + stepDur * 1.15);
 
-      const dur = stepDur * 1.25;
+      const dur =
+        lType === 'arp_pulse'
+          ? stepDur * 0.85
+          : lType === 'guitar_lead' || lType === 'organ_lead'
+            ? stepDur * 1.75
+            : stepDur * 1.25;
+      const peakGain = pattern.muffled
+        ? 0.1
+        : lType === 'arp_pulse'
+          ? 0.11
+          : isSectionB
+            ? 0.155
+            : 0.13;
       env.gain.setValueAtTime(0.001, time);
-      env.gain.linearRampToValueAtTime(pattern.muffled ? 0.1 : isSectionB ? 0.16 : 0.13, time + 0.006);
+      env.gain.linearRampToValueAtTime(peakGain, time + (lType === 'funk_brass' ? 0.018 : 0.006));
       env.gain.exponentialRampToValueAtTime(0.001, time + dur);
 
       osc1.connect(filter);
@@ -753,19 +489,39 @@ class SoundEngine {
       osc2.stop(stopTime);
     }
 
-    // 3. 90s Genesis Hardcore Rave Power-Chord Stabs
-    const stabRoot = pattern.stab[step];
+    // 2b. Optional Secondary Counter-Melody / Harmony / Breakdown Arp
+    const counterNote = section?.counter ? (section.counter[step] ?? 0) : 0;
+    if (counterNote > 0) {
+      this.triggerCounterVoice(counterNote, time, stepDur, bus, filterMult, pattern.muffled);
+    }
+
+    // 3. Track-Tailored 90s Genesis Chord Stabs (Minor / Funk Maj7 / Rock Power-5th / Industrial Dim)
+    const stabSeq = section ? section.stab : pattern.stab;
+    const stabRoot = stabSeq ? (stabSeq[step] ?? 0) : 0;
     if (stabRoot > 0) {
-      const intervals = isSectionB ? [0, 6, 12] : [0, 3, 7];
+      const chordKind = section?.stabChord ?? pattern.stabChord ?? 'minor';
+      const intervals =
+        chordKind === 'major7'
+          ? [0, 3, 7, 10]
+          : chordKind === 'power5'
+            ? [0, 7, 12]
+            : chordKind === 'dim'
+              ? [0, 3, 6]
+              : isSectionB
+                ? [0, 6, 12]
+                : [0, 3, 7];
       const stabFilter = this.ctx.createBiquadFilter();
       const stabEnv = this.ctx.createGain();
       stabFilter.type = 'bandpass';
-      stabFilter.Q.setValueAtTime(1.5, time);
-      stabFilter.frequency.setValueAtTime(clampFreq(pattern.muffled ? 650 : 2200), time);
-      stabFilter.frequency.exponentialRampToValueAtTime(clampFreq(pattern.muffled ? 320 : 720), time + stepDur * 1.45);
+      stabFilter.Q.setValueAtTime(chordKind === 'major7' ? 1.1 : 1.5, time);
+      stabFilter.frequency.setValueAtTime(clampFreq((pattern.muffled ? 650 : 2200) * filterMult), time);
+      stabFilter.frequency.exponentialRampToValueAtTime(
+        clampFreq((pattern.muffled ? 320 : 720) * Math.max(0.7, filterMult)),
+        time + stepDur * 1.45
+      );
 
       stabEnv.gain.setValueAtTime(0.001, time);
-      stabEnv.gain.linearRampToValueAtTime(pattern.muffled ? 0.11 : 0.17, time + 0.005);
+      stabEnv.gain.linearRampToValueAtTime(pattern.muffled ? 0.11 : 0.16, time + 0.005);
       stabEnv.gain.exponentialRampToValueAtTime(0.001, time + stepDur * 1.5);
 
       stabFilter.connect(stabEnv);
@@ -775,7 +531,7 @@ class SoundEngine {
       const oscs: OscillatorNode[] = [];
       for (let i = 0; i < intervals.length; i++) {
         const o = this.ctx.createOscillator();
-        o.type = 'sawtooth';
+        o.type = chordKind === 'major7' ? 'triangle' : 'sawtooth';
         o.frequency.setValueAtTime(midiToFreq(stabRoot + intervals[i]), time);
         o.connect(stabFilter);
         o.start(time);
@@ -786,7 +542,7 @@ class SoundEngine {
     }
 
     // 4. Hardcore Prodigy Breakbeat & Sega MD Industrial Drums
-    const drumSeq = isSectionB ? pattern.drumsB : pattern.drumsA;
+    const drumSeq = section ? section.drums : isSectionB ? pattern.drumsB : pattern.drumsA;
     const drumToken = drumSeq[step] ?? '';
     if (drumToken.includes('K')) this.triggerKick(time, bus, pattern.muffled);
     if (drumToken.includes('S')) this.triggerSnare(time, bus, 0.36, pattern.muffled);
@@ -800,54 +556,30 @@ class SoundEngine {
 
   private scheduleSynthwaveStep(
     pattern: TrackPattern,
-    step64: number,
+    globalStep: number,
     time: number,
     stepDur: number
   ): void {
     if (!this.ctx || !this.musicDrive) return;
     const bus = this.musicDrive;
-    const isSectionB = step64 >= 32;
-    const step = step64 % 32;
-    const barIdx = Math.floor(step64 / 16) % 4;
+    const { section, step, isSectionB, filterMult } = this.resolveSection(pattern, globalStep);
 
-    if (step64 % 16 === 0 && pattern.padChords && pattern.padChords[barIdx]) {
-      const chord = pattern.padChords[barIdx];
-      const barDur = stepDur * 16;
-      const padFilter = this.ctx.createBiquadFilter();
-      const padEnv = this.ctx.createGain();
-      padFilter.type = 'lowpass';
-      padFilter.Q.setValueAtTime(1.2, time);
-      padFilter.frequency.setValueAtTime(520, time);
-      padFilter.frequency.exponentialRampToValueAtTime(1450, time + barDur * 0.45);
-      padFilter.frequency.exponentialRampToValueAtTime(640, time + barDur * 0.98);
-
-      padEnv.gain.setValueAtTime(0.001, time);
-      padEnv.gain.linearRampToValueAtTime(0.11, time + barDur * 0.14);
-      padEnv.gain.setValueAtTime(0.1, time + barDur * 0.72);
-      padEnv.gain.exponentialRampToValueAtTime(0.001, time + barDur + 0.08);
-
-      padFilter.connect(padEnv);
-      padEnv.connect(bus);
-
-      const detunes = [-11, 9, -6, 13];
-      const oscs: OscillatorNode[] = [];
-      for (let i = 0; i < chord.length; i++) {
-        const o = this.ctx.createOscillator();
-        o.type = i === 0 ? 'triangle' : 'sawtooth';
-        o.frequency.setValueAtTime(midiToFreq(chord[i]), time);
-        o.detune.setValueAtTime(detunes[i % detunes.length], time);
-        o.connect(padFilter);
-        o.start(time);
-        o.stop(time + barDur + 0.12);
-        oscs.push(o);
+    // 1. Warm Juno Pad Chords (per-section 2-bar chords or legacy 4-bar chords)
+    if (step % 16 === 0) {
+      let chord: number[] | undefined;
+      if (section?.padChords && section.padChords.length > 0) {
+        chord = section.padChords[Math.floor(step / 16) % section.padChords.length];
+      } else if (pattern.padChords && pattern.padChords.length > 0) {
+        chord = pattern.padChords[Math.floor(globalStep / 16) % pattern.padChords.length];
       }
-      if (oscs.length > 0) {
-        bindCleanup(oscs[0], [...oscs, padFilter, padEnv]);
+      if (chord) {
+        this.triggerSectionPad(chord, time, stepDur * 16, bus, filterMult, 0.11);
       }
     }
 
-    const bassSeq = isSectionB ? pattern.bassB : pattern.bassA;
-    const bassNote = bassSeq[step];
+    // 2. Pulsing Analog Octave Bass
+    const bassSeq = section ? section.bass : isSectionB ? pattern.bassB : pattern.bassA;
+    const bassNote = bassSeq[step] ?? 0;
     if (bassNote > 0) {
       const freq = midiToFreq(bassNote);
       const isStrong = step % 2 === 0;
@@ -864,7 +596,7 @@ class SoundEngine {
 
       filter.type = 'lowpass';
       filter.Q.setValueAtTime(2.4, time);
-      filter.frequency.setValueAtTime(clampFreq(isStrong ? 1180 : 720), time);
+      filter.frequency.setValueAtTime(clampFreq((isStrong ? 1180 : 720) * filterMult), time);
       filter.frequency.exponentialRampToValueAtTime(210, time + stepDur * 0.92);
 
       env.gain.setValueAtTime(0.001, time);
@@ -884,7 +616,9 @@ class SoundEngine {
       sub.stop(stopT);
     }
 
-    const arpNote = pattern.stab[step];
+    // 3. Shimmering Offbeat Synthwave Arp
+    const arpSeq = section?.stab ?? pattern.stab;
+    const arpNote = arpSeq ? (arpSeq[step] ?? 0) : 0;
     if (arpNote > 0 && step % 2 === 1) {
       const arpFreq = midiToFreq(arpNote);
       const arpOsc = this.ctx.createOscillator();
@@ -901,8 +635,9 @@ class SoundEngine {
       arpOsc.stop(time + stepDur * 1.68);
     }
 
-    const leadSeq = isSectionB ? pattern.leadB : pattern.leadA;
-    const leadNote = leadSeq[step];
+    // 4. Nostalgic OutRun Lead + Optional Chorus Harmony
+    const leadSeq = section ? section.lead : isSectionB ? pattern.leadB : pattern.leadA;
+    const leadNote = leadSeq ? (leadSeq[step] ?? 0) : 0;
     if (leadNote > 0) {
       const freq = midiToFreq(leadNote);
       const o1 = this.ctx.createOscillator();
@@ -919,8 +654,8 @@ class SoundEngine {
 
       lpf.type = 'lowpass';
       lpf.Q.setValueAtTime(2.0, time);
-      lpf.frequency.setValueAtTime(2550, time);
-      lpf.frequency.exponentialRampToValueAtTime(920, time + stepDur * 2.1);
+      lpf.frequency.setValueAtTime(clampFreq(2550 * filterMult), time);
+      lpf.frequency.exponentialRampToValueAtTime(clampFreq(920 * filterMult), time + stepDur * 2.1);
 
       const dur = stepDur * 2.35;
       env.gain.setValueAtTime(0.001, time);
@@ -940,7 +675,13 @@ class SoundEngine {
       o2.stop(stopT);
     }
 
-    const drumSeq = isSectionB ? pattern.drumsB : pattern.drumsA;
+    const counterNote = section?.counter ? (section.counter[step] ?? 0) : 0;
+    if (counterNote > 0) {
+      this.triggerCounterVoice(counterNote, time, stepDur, bus, filterMult, false);
+    }
+
+    // 5. Gated 80s Reverb Snare & Linndrum Toms
+    const drumSeq = section ? section.drums : isSectionB ? pattern.drumsB : pattern.drumsA;
     const drumToken = drumSeq[step] ?? '';
     if (drumToken.includes('K')) this.triggerKick(time, bus, true);
     if (drumToken.includes('S')) this.triggerGatedSnare(time, bus);
