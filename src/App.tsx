@@ -7,6 +7,7 @@ import { EndlessFinaleView } from './components/EndlessFinaleView';
 import { GameHud } from './components/GameHud';
 import { GameModals } from './components/GameModals';
 import { IosFullscreenModal } from './components/IosFullscreenModal';
+import { LeaderboardModal } from './components/LeaderboardModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { OnlineLobby } from './components/OnlineLobby';
 import { TitleScreen } from './components/TitleScreen';
@@ -46,6 +47,8 @@ export default function App() {
     controls: initialSave.current.controls,
   });
   const [controlsModalOpen, setControlsModalOpen] = useState<boolean>(false);
+  const [leaderboardOpen, setLeaderboardOpen] = useState<boolean>(false);
+  const [lastSavedEntryId, setLastSavedEntryId] = useState<string | null>(null);
   const controlsRef = useRef(settings.controls);
   controlsRef.current = settings.controls;
   const [highScore, setHighScore] = useState<number>(initialSave.current.highScore);
@@ -95,8 +98,8 @@ export default function App() {
   }, [platform.showTouchControls, platform.recommendedRenderScale]);
 
   useEffect(() => {
-    engineRef.current?.setInputBlocked(controlsModalOpen || fullscreen.iosGuideOpen);
-  }, [controlsModalOpen, fullscreen.iosGuideOpen]);
+    engineRef.current?.setInputBlocked(controlsModalOpen || fullscreen.iosGuideOpen || leaderboardOpen);
+  }, [controlsModalOpen, fullscreen.iosGuideOpen, leaderboardOpen]);
 
   // iOS Safari & Mobile Browser Edge-Swipe / Overscroll Guard during active gameplay
   useEffect(() => {
@@ -705,6 +708,16 @@ export default function App() {
     />
   );
 
+  const leaderboardModal = (
+    <LeaderboardModal
+      open={leaderboardOpen}
+      personalBest={highScore}
+      highlightEntryId={lastSavedEntryId}
+      gamepadBindings={settings.controls.gamepad}
+      onClose={() => setLeaderboardOpen(false)}
+    />
+  );
+
   if (screen === 'TITLE_MENU') {
     return (
       <>
@@ -716,11 +729,13 @@ export default function App() {
           gamepadCount={platform.gamepadCount}
           controlsModalOpen={controlsModalOpen}
           iosGuideOpen={fullscreen.iosGuideOpen}
+          leaderboardOpen={leaderboardOpen}
           canShowFullscreen={fullscreen.canShowButton}
           isFullscreen={fullscreen.isFullscreen}
           onToggleFullscreen={fullscreen.toggleFullscreen}
           onUpdateSettings={handleUpdateSettings}
           onOpenControls={() => setControlsModalOpen(true)}
+          onOpenLeaderboard={() => setLeaderboardOpen(true)}
           onStart={() => setScreen('CHAR_SELECT')}
           onOpenOnlineLobby={handleOpenOnlineLobby}
           onPreviewFinale={() => {
@@ -730,6 +745,7 @@ export default function App() {
         />
         {controlsModal}
         {iosFullscreenModal}
+        {leaderboardModal}
         <OfflineIndicator />
       </>
     );
@@ -811,23 +827,31 @@ export default function App() {
   }
 
   if (screen === 'VICTORY') {
+    const finaleMode = onlineRoom ? 'online' : settings.players === 2 ? '2p' : '1p';
     return (
       <>
         <EndlessFinaleView
           score={carryScore}
           highScore={highScore}
+          heroes={selectedHeroes}
+          difficulty={settings.difficulty}
+          gameMode={finaleMode}
           crtScanlines={settings.crtScanlines}
           muted={settings.muted}
           isTouchDevice={platform.isTouchDevice}
           renderScale={platform.recommendedRenderScale}
           gamepadBindings={settings.controls.gamepad}
+          leaderboardOpen={leaderboardOpen}
           canShowFullscreen={fullscreen.canShowButton}
           isFullscreen={fullscreen.isFullscreen}
           onToggleFullscreen={fullscreen.toggleFullscreen}
           onToggleMute={handleToggleMute}
+          onScoreSaved={(entryId) => setLastSavedEntryId(entryId)}
+          onOpenLeaderboard={() => setLeaderboardOpen(true)}
           onReturnTitle={handleReturnTitle}
         />
         {iosFullscreenModal}
+        {leaderboardModal}
         <OfflineIndicator />
       </>
     );

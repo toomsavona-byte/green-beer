@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Gamepad2, Maximize2, Minimize2, Volume2, VolumeX } from 'lucide-react';
+import { Gamepad2, Maximize2, Minimize2, Trophy, Volume2, VolumeX } from 'lucide-react';
 import { formatGamepadBinding, formatKeyCode } from '../game/controls';
 import { DIFFICULTIES, LEVELS, TITLE_ART_URL } from '../game/data';
 import { soundEngine } from '../game/audio';
@@ -15,11 +15,13 @@ interface TitleScreenProps {
   gamepadCount: number;
   controlsModalOpen?: boolean;
   iosGuideOpen?: boolean;
+  leaderboardOpen?: boolean;
   canShowFullscreen?: boolean;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
   onUpdateSettings: (partial: Partial<GameSettings>) => void;
   onOpenControls: () => void;
+  onOpenLeaderboard: () => void;
   onStart: () => void;
   onOpenOnlineLobby: () => void;
   onPreviewFinale: () => void;
@@ -43,6 +45,7 @@ type FocusItemId =
   | 'lvl_5'
   | 'lvl_6'
   | 'finale'
+  | 'leaderboard'
   | 'fullscreen'
   | 'mute';
 
@@ -60,11 +63,13 @@ export function TitleScreen({
   gamepadCount,
   controlsModalOpen = false,
   iosGuideOpen = false,
+  leaderboardOpen = false,
   canShowFullscreen = false,
   isFullscreen = false,
   onToggleFullscreen,
   onUpdateSettings,
   onOpenControls,
+  onOpenLeaderboard,
   onStart,
   onOpenOnlineLobby,
   onPreviewFinale,
@@ -79,7 +84,9 @@ export function TitleScreen({
       ['1p', '2p', 'online', 'start'],
       ['diff_easy', 'diff_normal', 'diff_hard', 'controls', 'touch', 'ff'],
       ['lvl_1', 'lvl_2', 'lvl_3', 'lvl_4', 'lvl_5', 'lvl_6', 'finale'],
-      canShowFullscreen && onToggleFullscreen ? ['fullscreen', 'mute'] : ['mute'],
+      canShowFullscreen && onToggleFullscreen
+        ? ['leaderboard', 'fullscreen', 'mute']
+        : ['leaderboard', 'mute'],
     ],
     [canShowFullscreen, onToggleFullscreen]
   );
@@ -96,7 +103,7 @@ export function TitleScreen({
   }, []);
 
   useEffect(() => {
-    if (controlsModalOpen || iosGuideOpen) return;
+    if (controlsModalOpen || iosGuideOpen || leaderboardOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Enter' || e.code === 'Space') {
         e.preventDefault();
@@ -115,7 +122,7 @@ export function TitleScreen({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [controlsModalOpen, iosGuideOpen, onStart, onUpdateSettings]);
+  }, [controlsModalOpen, iosGuideOpen, leaderboardOpen, onStart, onUpdateSettings]);
 
   const toggleMute = () => {
     const next = !settings.muted;
@@ -189,6 +196,10 @@ export function TitleScreen({
         soundEngine.playMenuConfirm();
         onPreviewFinale();
         break;
+      case 'leaderboard':
+        soundEngine.playMenuConfirm();
+        onOpenLeaderboard();
+        break;
       case 'fullscreen':
         soundEngine.playMenuMove();
         onToggleFullscreen?.();
@@ -200,7 +211,7 @@ export function TitleScreen({
   };
 
   useGamepadMenuNav({
-    enabled: !controlsModalOpen && !iosGuideOpen,
+    enabled: !controlsModalOpen && !iosGuideOpen && !leaderboardOpen,
     gamepadBindings: settings.controls.gamepad,
     onActivity: () => setGpNavActive(true),
     onLeft: () => {
@@ -285,6 +296,19 @@ export function TitleScreen({
 
         <div className="flex items-center gap-2 shrink-0">
           <PWAInstallButton />
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine.unlock();
+              soundEngine.playMenuConfirm();
+              onOpenLeaderboard();
+            }}
+            aria-label="Топ игроков по очкам"
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 min-h-[40px] sm:min-h-0 sm:py-1.5 bg-[#2A220D]/92 border border-[#FDE047] text-xs font-mono-num font-bold text-[#FEF08A] hover:bg-[#FDE047] hover:text-[#090C11] transition-colors cursor-pointer whitespace-nowrap shrink-0 ${focusRing('leaderboard')}`}
+          >
+            <Trophy className="w-4 h-4" />
+            <span>ТОП</span>
+          </button>
           {canShowFullscreen && onToggleFullscreen && (
             <button
               type="button"

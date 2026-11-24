@@ -71,7 +71,7 @@ export interface NetFramePayload {
     timer: number;
   }>;
   pickups: Array<{
-    kind: 'beer' | 'weapon';
+    kind: 'beer' | 'beer_bottle' | 'weapon';
     x: number;
     y: number;
     weaponId?: string;

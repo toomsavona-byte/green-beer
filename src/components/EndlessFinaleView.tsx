@@ -1,21 +1,33 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff, Home, Maximize2, Minimize2, Music, Volume2, VolumeX } from 'lucide-react';
+import { Check, Eye, EyeOff, Home, Maximize2, Minimize2, Music, Trophy, Volume2, VolumeX, X } from 'lucide-react';
 import { soundEngine } from '../game/audio';
 import { GamepadControlMap, isGamepadBindingActive } from '../game/controls';
+import {
+  LeaderboardMode,
+  loadLastPlayerName,
+  submitLeaderboardScore,
+} from '../game/leaderboard';
+import { DifficultyId, HeroId } from '../game/types';
 import { useGamepadMenuNav } from '../hooks/useGamepadMenuNav';
 
 interface EndlessFinaleViewProps {
   score: number;
   highScore: number;
+  heroes: HeroId[];
+  difficulty: DifficultyId;
+  gameMode: LeaderboardMode;
   crtScanlines: boolean;
   muted: boolean;
   isTouchDevice: boolean;
   renderScale: number;
   gamepadBindings?: GamepadControlMap;
+  leaderboardOpen?: boolean;
   canShowFullscreen?: boolean;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
   onToggleMute: () => void;
+  onScoreSaved?: (entryId: string, rank: number | null) => void;
+  onOpenLeaderboard?: () => void;
   onReturnTitle: () => void;
 }
 
@@ -186,15 +198,21 @@ interface ExhaustPuff {
 export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
   score,
   highScore,
+  heroes,
+  difficulty,
+  gameMode,
   crtScanlines,
   muted,
   isTouchDevice,
   renderScale,
   gamepadBindings,
+  leaderboardOpen = false,
   canShowFullscreen = false,
   isFullscreen = false,
   onToggleFullscreen,
   onToggleMute,
+  onScoreSaved,
+  onOpenLeaderboard,
   onReturnTitle,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -204,6 +222,16 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
     subtitle: BIOMES[0].subtitle,
   });
   const [epilogueIdx, setEpilogueIdx] = useState(0);
+
+  // Non-interrupting Hall of Fame score entry state (vanishes completely once submitted or skipped)
+  const [showScoreEntry, setShowScoreEntry] = useState(true);
+  const [playerName, setPlayerName] = useState<string>(() => loadLastPlayerName());
+  const [submittingScore, setSubmittingScore] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [inputFocused, setInputFocused] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+
+  const effectiveScore = score > 0 ? score : highScore;
 
   // Interactive cruise state stored in refs for zero-re-render 60fps loop
   const steerInputRef = useRef(0); // -1..1 keyboard/touch steer
@@ -217,6 +245,43 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
     hornFlashRef.current = 0.45;
   }, []);
 
+  const handleSubmitScore = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (submittingScore) return;
+      const trimmed = playerName.trim();
+      if (!trimmed) {
+        setSubmitError('ВВЕДИ ИМЯ');
+        return;
+      }
+      setSubmittingScore(true);
+      setSubmitError(null);
+      try {
+        soundEngine.unlock();
+        const res = await submitLeaderboardScore({
+          name: trimmed,
+          score: effectiveScore,
+          heroes,
+          difficulty,
+          mode: gameMode,
+        });
+        soundEngine.playMenuConfirm();
+        // Immediately hide the input box so only the live running finale remains!
+        setShowScoreEntry(false);
+        setInputFocused(false);
+        onScoreSaved?.(res.entry.id, res.rank);
+        const rankText = res.rank ? `МЕСТО #${res.rank}` : 'ЗАПИСАНО В ТОП';
+        setSavedNotice(rankText);
+        window.setTimeout(() => setSavedNotice(null), 3200);
+      } catch (err) {
+        setSubmitError(err instanceof Error ? err.message : 'Ошибка записи');
+      } finally {
+        setSubmittingScore(false);
+      }
+    },
+    [submittingScore, playerName, effectiveScore, heroes, difficulty, gameMode, onScoreSaved]
+  );
+
   // Rotate epilogue captions every 7.5 seconds
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -225,7 +290,7 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
     return () => window.clearInterval(id);
   }, []);
 
-  // Keyboard controls: Left/Right or A/D steer, Space honks, H toggles clean screen, Esc returns
+  // Keyboard controls: Left/Right or A/D steer, Space honks, H toggles clean screen (ignored while typing name!)
   useEffect(() => {
     const pressed = new Set<string>();
     const updateSteer = () => {
@@ -234,7 +299,13 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
       steerInputRef.current = (right ? 1 : 0) - (left ? 1 : 0);
     };
 
+    const isTypingInInput = () => {
+      const el = document.activeElement;
+      return Boolean(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'));
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
+      if (leaderboardOpen || isTypingInInput()) return;
       if (e.code === 'ArrowLeft' || e.code === 'KeyA' || e.code === 'ArrowRight' || e.code === 'KeyD') {
         pressed.add(e.code);
         updateSteer();
@@ -261,11 +332,11 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [onToggleMute, triggerHorn]);
+  }, [leaderboardOpen, onToggleMute, triggerHorn]);
 
   // Gamepad buttons in Endless Finale: A/✕ honks horn, X/Y toggles HUD, B/○ or START returns to title
   useGamepadMenuNav({
-    enabled: true,
+    enabled: !inputFocused && !leaderboardOpen,
     gamepadBindings,
     onConfirm: () => {
       soundEngine.unlock();
@@ -1791,6 +1862,28 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
 
             {/* Single-Line Action Controls */}
             <div className="flex items-center gap-2">
+              {savedNotice && (
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-[#14301D]/90 border border-[#39FF14] text-[#39FF14] text-xs font-mono-num font-bold">
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{savedNotice}</span>
+                </div>
+              )}
+
+              {onOpenLeaderboard && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.unlock();
+                    soundEngine.playMenuMove();
+                    onOpenLeaderboard();
+                  }}
+                  className="px-2.5 py-1.5 bg-[#0F0822]/75 hover:bg-[#1E1042] border border-[#FDE047]/65 text-[#FEF08A] text-xs font-display tracking-wider flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap"
+                >
+                  <Trophy className="w-3.5 h-3.5 text-[#FDE047]" />
+                  <span className="hidden sm:inline">ТОП</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={triggerHorn}
@@ -1841,6 +1934,72 @@ export const EndlessFinaleView: React.FC<EndlessFinaleViewProps> = ({
               </button>
             </div>
           </header>
+
+          {/* Non-Interrupting Floating Hall of Fame Name Input — disappears completely after submit/close */}
+          {showScoreEntry && (
+            <div className="pointer-events-none fixed top-[64px] sm:top-[74px] inset-x-3 z-25 flex justify-center">
+              <form
+                onSubmit={handleSubmitScore}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="pointer-events-auto w-full max-w-lg bg-[#0D071F]/82 backdrop-blur-xs border border-[#FF40A8]/80 shadow-[0_0_24px_rgba(255,64,168,0.28)] px-3.5 py-2.5 flex flex-col gap-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Trophy className="w-4 h-4 text-[#FDE047] shrink-0" />
+                    <span className="font-display text-xs sm:text-sm tracking-[0.14em] text-[#FEF08A] uppercase truncate">
+                      ВПИШИ ИМЯ В ТОП ИГРОКОВ
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-mono-num text-xs sm:text-sm font-bold text-[#39FF14] tabular-nums">
+                      {effectiveScore.toLocaleString('ru-RU')} PTS
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundEngine.playMenuMove();
+                        setShowScoreEntry(false);
+                        setInputFocused(false);
+                      }}
+                      aria-label="Скрыть ввод имени"
+                      title="Пропустить"
+                      className="p-1 text-[#CBD5E1]/70 hover:text-white cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={playerName}
+                    onChange={(e) => {
+                      setPlayerName(e.target.value.slice(0, 18));
+                      if (submitError) setSubmitError(null);
+                    }}
+                    onFocus={() => setInputFocused(true)}
+                    onBlur={() => setInputFocused(false)}
+                    placeholder="ТВОЙ НИК (ДО 18 СИМВ.)"
+                    maxLength={18}
+                    autoComplete="nickname"
+                    className="flex-1 min-w-0 px-3 py-1.5 bg-[#080414]/90 border border-[#22D3EE]/70 focus:border-[#39FF14] focus:outline-none text-[#F8FAFC] placeholder:text-[#64748B] font-mono-num text-xs sm:text-sm tracking-wider select-text"
+                  />
+                  <button
+                    type="submit"
+                    disabled={submittingScore}
+                    className="px-4 py-1.5 bg-[#39FF14] hover:bg-[#6DFF52] disabled:opacity-60 text-[#090C11] font-display font-bold text-xs sm:text-sm tracking-widest transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    {submittingScore ? '...' : 'ЗАПИСАТЬ'}
+                  </button>
+                </div>
+
+                {submitError && (
+                  <div className="text-[11px] font-mono-num text-[#FDA4AF]">{submitError}</div>
+                )}
+              </form>
+            </div>
+          )}
 
           {/* Bottom Epilogue Ticker & Controls Hint */}
           <footer className="pointer-events-none fixed bottom-0 inset-x-0 z-20 px-4 sm:px-6 pb-3 pt-8 bg-gradient-to-t from-[#0B041A]/85 via-[#0B041A]/35 to-transparent flex flex-col items-center gap-1.5 text-center">

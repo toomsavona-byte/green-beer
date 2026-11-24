@@ -61,9 +61,9 @@ export const HEROES: HeroDef[] = [
   {
     id: 'vadek',
     name: 'VADEK',
-    subtitle: 'Автолюбитель · Заводчик собак',
+    subtitle: 'Автолюбитель · Душа компании',
     role: 'Танк-саппорт · Стабильный урон',
-    bio: 'Крепкий мужик 40+, кожанка с нашивкой волкодава, перчатки механика и ключи от фургона. Держит удар за всю команду.',
+    bio: 'Крепкий мужик 40+, потёртая кожанка, перчатки механика и ключи от фургона. Знает каждый объезд и держит удар за всю команду.',
     nativeWeaponId: 'chaindog',
     stats: {
       speed: 3,
@@ -177,9 +177,9 @@ export const HEROES: HeroDef[] = [
   {
     id: 'sandro',
     name: 'SANDRO',
-    subtitle: 'Басист · Велосипедист · Столяр',
+    subtitle: 'Мастер элитной мебели · Басист',
     role: 'Универсал · Пробивной урон',
-    bio: 'Короткая стрижка, кольцо в левом ухе, кожаный жилет, чехол бас-гитары за спиной и джинсы с цепью. Прошивает броню.',
+    bio: 'Делает элитную дизайнерскую мебель из массива дуба и рубит тяжёлый бас. Кожаный жилет, кольцо в ухе и железный удар.',
     nativeWeaponId: 'bass_beam',
     stats: {
       speed: 4,
@@ -307,7 +307,7 @@ export const WEAPONS: WeaponDef[] = [
     ownerId: 'vadek',
     shortTag: 'ДРОБОВИК',
     description: 'Мощный 4-ствольный разброс, отбрасывает толпу вблизи.',
-    nativeBonusDesc: 'VADEK: +10% урон/темп + фирменный звук лая',
+    nativeBonusDesc: 'VADEK: +10% урон/темп + плотный гаражный выстрел',
     damage: 14,
     cooldown: 0.44,
     speed: 370,
@@ -683,9 +683,9 @@ export const LEVELS: LevelDef[] = [
   },
   {
     id: 2,
-    name: 'Уровень 2 · Неоновый рынок пива',
+    name: 'Уровень 2 · Дневной рынок пива',
     shortName: '2. Рынок пива',
-    location: 'Кибер-базар · Статуя Буйвола · Баржа «Алупка-Мару» · Склад',
+    location: 'Солнечный базар · Статуя Буйвола · Баржа «Алупка-Мару» · Набережная',
     mode: 'beatemup',
     length: 8200,
     checkpointX: 2650,
@@ -694,9 +694,9 @@ export const LEVELS: LevelDef[] = [
     bossName: 'БУЙВОЛ-БАРЫГА',
     bossSubtitle: 'КОРОЛЬ ПИВНОГО РЫНКА · ТАНК-ТОРГОВЕЦ',
     musicTrack: 'level2',
-    skyTop: '#13071D',
-    skyBottom: '#2B1628',
-    accentColor: '#FF2A85',
+    skyTop: '#2B93DB',
+    skyBottom: '#C8ECFC',
+    accentColor: '#F59E0B',
     landmarks: [
       { kind: 'statue_cyber_bull', x: 1950, label: 'МОНУМЕНТ БУЙВОЛА' },
       { kind: 'beached_cargo_ship', x: 4450, label: 'СУХОГРУЗ АЛУПКА-МАРУ' },
@@ -1054,9 +1054,9 @@ export const LEVELS: LevelDef[] = [
   },
   {
     id: 4,
-    name: 'Уровень 4 · Неоновый кибер-хайвей',
+    name: 'Уровень 4 · Солнечный хайвей',
     shortName: '4. Мотоциклы',
-    location: 'Эстакада · Горящая фура · Разбитый мост с провалами · Виадук',
+    location: 'Прибрежная трасса · Горящая фура · Мост над заливом · Виадук',
     mode: 'highway',
     length: 10200,
     checkpointX: 3300,
@@ -1065,9 +1065,9 @@ export const LEVELS: LevelDef[] = [
     bossName: 'КАРАВАН-БОСС',
     bossSubtitle: 'БРОНЕГРУЗОВИК С ЗЕЛЁНЫМ ПИВОМ И ТУРЕЛЬЮ',
     musicTrack: 'level4',
-    skyTop: '#0A0518',
-    skyBottom: '#231040',
-    accentColor: '#FF2A85',
+    skyTop: '#1D74D8',
+    skyBottom: '#BDE2FF',
+    accentColor: '#F59E0B',
     landmarks: [
       { kind: 'burning_semi_truck', x: 2450, label: 'ГОРЯЩАЯ ФУРА' },
       { kind: 'bridge_hole', x: 5250, label: 'ПРОВАЛ В МОСТУ' },
@@ -1358,7 +1358,7 @@ export const LEVELS: LevelDef[] = [
     id: 6,
     name: 'Уровень 6 · Завод и офис директора',
     shortName: '6. Директор',
-    location: 'Чан Био-Колосса · Статуя Директора · Глобус PIZED · Пентхаус',
+    location: 'Светлый атриум · Био-Колосс · Бюст Директора · Солнечный пентхаус',
     mode: 'beatemup',
     length: 9000,
     checkpointX: 2950,
@@ -1367,9 +1367,9 @@ export const LEVELS: LevelDef[] = [
     bossName: 'ДИРЕКТОР ЗАВОДА',
     bossSubtitle: 'СОЗДАТЕЛЬ ВИРУСА PIZED-77 · ФИНАЛЬНЫЙ БОСС',
     musicTrack: 'level5',
-    skyTop: '#050C0A',
-    skyBottom: '#0E291D',
-    accentColor: '#39FF14',
+    skyTop: '#4A9EE6',
+    skyBottom: '#DFF2FE',
+    accentColor: '#10B981',
     landmarks: [
       { kind: 'bio_leviathan_tank', x: 2180, label: 'БИО-КОЛОСС PIZED-77' },
       { kind: 'director_statue', x: 4950, label: 'БЮСТ ДИРЕКТОРА' },
@@ -1560,8 +1560,8 @@ export const CUTSCENES: Record<LevelId, CutsceneDef> = {
     lines: [
       {
         speakerId: 'vadek',
-        stageAction: 'глушит мотор, выходит, оглядывается',
-        text: 'Мы всего на пару дней уехали... Что за бля тут произошло?',
+        stageAction: 'глушит мотор, хлопает дверью и смотрит на ценник парковки',
+        text: 'Уехали всего на два дня — а тут и город зелёный, и парковка опять подорожала. Бля, приехали.',
       },
       {
         speakerId: 'vano',
@@ -1606,7 +1606,7 @@ export const CUTSCENES: Record<LevelId, CutsceneDef> = {
     title: 'ПЕРЕД УРОВНЕМ 2 · РЫНОК ЗЕЛЁНОГО ПИВА',
     locationLabel: 'Гараж · Совещание в дымном облаке',
     sceneTheme: 'market_crates',
-    epilogueAction: 'SANDRO чинит табурет из ящика, все садятся, DED пускает густой дым. На стене — афиша концерта.',
+    epilogueAction: 'SANDRO оценивает дубовый массив для элитной мебели, все переводят дух, DED пускает густой дым. На стене — афиша концерта.',
     lines: [
       {
         speakerId: 'vano',
@@ -1615,13 +1615,13 @@ export const CUTSCENES: Record<LevelId, CutsceneDef> = {
       },
       {
         speakerId: 'vadek',
-        stageAction: 'свистит собакам',
-        text: 'Собаки не тронуты вирусом. Проверено. Взять буйволов.',
+        stageAction: 'протирает солнцезащитные очки и ухмыляется',
+        text: 'Я думал, хуже очереди на шиномонтаж в ноябре не бывает. А тут целая ярмарка зомби.',
       },
       {
         speakerId: 'sandro',
-        stageAction: 'чинит табурет из ящика',
-        text: 'Из этих ящиков выйдет мебель. После нас.',
+        stageAction: 'проводит ладонью по резному дубовому брусу',
+        text: 'Шикарный массив тут пылится — на элитную мебель бы пошёл, да эти буйволы всё залили зелёным.',
       },
       {
         speakerId: 'hooper',
@@ -1675,8 +1675,8 @@ export const CUTSCENES: Record<LevelId, CutsceneDef> = {
       },
       {
         speakerId: 'vadek',
-        stageAction: 'проверяет дробовик',
-        text: 'Собака останется у фургона. Прикроет тыл.',
+        stageAction: 'проверяет дробовик и косится на ценник КПП',
+        text: 'Охраны больше, чем у нас в гаражном кооперативе на собрании. Но ничего — разберёмся.',
       },
       {
         speakerId: 'vano',
@@ -1691,7 +1691,7 @@ export const CUTSCENES: Record<LevelId, CutsceneDef> = {
       {
         speakerId: 'sandro',
         stageAction: 'достаёт рельсотрон',
-        text: 'Один выстрел — одна дырка. В броне.',
+        text: 'Точность как при сборке элитной мебели — миллиметр в миллиметр, прямо сквозь броню.',
       },
       {
         speakerId: 'ded',
@@ -1704,14 +1704,14 @@ export const CUTSCENES: Record<LevelId, CutsceneDef> = {
     id: 'cutscene_4',
     levelId: 4,
     title: 'ПЕРЕД УРОВНЕМ 4 · МОТОЦИКЛЕТНАЯ ПОГОНЯ',
-    locationLabel: 'Съезд на ночной хайвей · Байки заведены',
+    locationLabel: 'Солнечный хайвей · Хромированные Харлеи заведены',
     sceneTheme: 'highway_bikes',
-    epilogueAction: 'Все заводят байки, VADEK вырывается вперёд, DED дымит из коляски — погоня начинается!',
+    epilogueAction: 'Все заводят Харлеи, VADEK даёт газу, DED дымит из коляски — погоня начинается!',
     lines: [
       {
         speakerId: 'vadek',
-        stageAction: 'заводит мотоцикл',
-        text: 'Автолюбитель за рулём. Держитесь! Как от Верхней Алупки до дома.',
+        stageAction: 'прогазовывает хромированный Харлей',
+        text: 'Никаких пробок, солнце в лицо и бензин за счёт завода — вот это я понимаю поездка!',
       },
       {
         speakerId: 'vano',
@@ -1810,8 +1810,8 @@ export const CUTSCENES: Record<LevelId, CutsceneDef> = {
       },
       {
         speakerId: 'vadek',
-        stageAction: 'заряжает дробовик',
-        text: 'Собаки окружили здание. Никто не уйдёт.',
+        stageAction: 'заряжает дробовик и оглядывает светлый офис',
+        text: 'У директора окна в пол и мрамор, а кофемашины нормальной нет. За одно это уже стоит зайти.',
       },
       {
         speakerId: 'vano',
@@ -1820,8 +1820,8 @@ export const CUTSCENES: Record<LevelId, CutsceneDef> = {
       },
       {
         speakerId: 'sandro',
-        stageAction: 'настраивает бас',
-        text: 'Финальный аккорд. Врубаю на полную.',
+        stageAction: 'осматривает стол директора с усмешкой',
+        text: 'Фурнитура у директора дешёвая — не то что моя элитная мебель. Сейчас устроим перестановку!',
       },
       {
         speakerId: 'hooper',

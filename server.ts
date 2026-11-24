@@ -1,4 +1,6 @@
+import crypto from 'crypto';
 import express from 'express';
+import fs from 'fs/promises';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -21,10 +23,128 @@ const VALID_HEROES = new Set([
   'ded',
 ]);
 const VALID_DIFFICULTIES = new Set(['easy', 'normal', 'hard']);
+const VALID_MODES = new Set(['1p', '2p', 'online']);
 const VALID_PHASES = new Set(['LOBBY', 'CUTSCENE', 'PLAYING', 'STAGE_CLEAR', 'GAME_OVER', 'VICTORY']);
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MAX_ROOMS = 150;
 const ROOM_TTL_MS = 25 * 60 * 1000;
+
+// Persistent Hall of Fame Leaderboard (stored safely inside app data directory)
+const DATA_DIR = path.resolve(__dirname, 'data');
+const LEADERBOARD_FILE = path.resolve(DATA_DIR, 'leaderboard.json');
+const MAX_STORED_SCORES = 100;
+const PUBLIC_TOP_LIMIT = 25;
+const SUBMIT_WINDOW_MS = 5 * 60 * 1000;
+const SUBMIT_MAX_PER_WINDOW = 12;
+
+interface LeaderboardRecord {
+  id: string;
+  name: string;
+  score: number;
+  heroes: string[];
+  difficulty: 'easy' | 'normal' | 'hard';
+  mode: '1p' | '2p' | 'online';
+  createdAt: number;
+}
+
+let leaderboardCache: LeaderboardRecord[] = [];
+let leaderboardWriteChain: Promise<void> = Promise.resolve();
+const submitRateMap = new Map<string, number[]>();
+
+function sanitizePlayerName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  // Strip control characters and angle brackets, normalize spaces
+  const cleaned = raw
+    .replace(/[\u0000-\u001F\u007F<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 18);
+  return cleaned.length >= 1 ? cleaned : null;
+}
+
+function sortLeaderboard(entries: LeaderboardRecord[]): LeaderboardRecord[] {
+  return [...entries].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.createdAt - b.createdAt;
+  });
+}
+
+async function loadLeaderboardFromDisk(): Promise<void> {
+  try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    const raw = await fs.readFile(LEADERBOARD_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return;
+    const valid: LeaderboardRecord[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue;
+      const rec = item as Record<string, unknown>;
+      const name = sanitizePlayerName(rec.name);
+      const score =
+        typeof rec.score === 'number' && Number.isFinite(rec.score)
+          ? Math.max(0, Math.min(99_999_999, Math.floor(rec.score)))
+          : null;
+      if (!name || score === null) continue;
+      const heroes = Array.isArray(rec.heroes)
+        ? rec.heroes.filter((h): h is string => typeof h === 'string' && VALID_HEROES.has(h)).slice(0, 2)
+        : [];
+      const difficulty =
+        typeof rec.difficulty === 'string' && VALID_DIFFICULTIES.has(rec.difficulty)
+          ? (rec.difficulty as 'easy' | 'normal' | 'hard')
+          : 'normal';
+      const mode =
+        typeof rec.mode === 'string' && VALID_MODES.has(rec.mode)
+          ? (rec.mode as '1p' | '2p' | 'online')
+          : '1p';
+      valid.push({
+        id: typeof rec.id === 'string' && rec.id.length <= 48 ? rec.id : crypto.randomUUID(),
+        name,
+        score,
+        heroes: heroes.length > 0 ? heroes : ['vadek'],
+        difficulty,
+        mode,
+        createdAt: typeof rec.createdAt === 'number' && Number.isFinite(rec.createdAt) ? rec.createdAt : Date.now(),
+      });
+    }
+    leaderboardCache = sortLeaderboard(valid).slice(0, MAX_STORED_SCORES);
+  } catch {
+    leaderboardCache = [];
+  }
+}
+
+function persistLeaderboardToDisk(snapshot: LeaderboardRecord[]): Promise<void> {
+  const payload = JSON.stringify(snapshot, null, 2);
+  leaderboardWriteChain = leaderboardWriteChain
+    .then(async () => {
+      await fs.mkdir(DATA_DIR, { recursive: true });
+      const tmpPath = `${LEADERBOARD_FILE}.tmp`;
+      await fs.writeFile(tmpPath, payload, 'utf8');
+      await fs.rename(tmpPath, LEADERBOARD_FILE);
+    })
+    .catch((err) => {
+      console.error('Failed to persist leaderboard:', err);
+    });
+  return leaderboardWriteChain;
+}
+
+function allowScoreSubmit(clientIp: string): boolean {
+  const now = Date.now();
+  if (submitRateMap.size > 500) {
+    for (const [ip, times] of submitRateMap.entries()) {
+      const fresh = times.filter((t) => now - t < SUBMIT_WINDOW_MS);
+      if (fresh.length === 0) submitRateMap.delete(ip);
+      else submitRateMap.set(ip, fresh);
+    }
+  }
+  const prev = (submitRateMap.get(clientIp) ?? []).filter((t) => now - t < SUBMIT_WINDOW_MS);
+  if (prev.length >= SUBMIT_MAX_PER_WINDOW) {
+    submitRateMap.set(clientIp, prev);
+    return false;
+  }
+  prev.push(now);
+  submitRateMap.set(clientIp, prev);
+  return true;
+}
 
 interface RoomState {
   code: string;
@@ -177,11 +297,81 @@ function isValidLevelId(n: unknown): n is 1 | 2 | 3 | 4 | 5 | 6 {
 }
 
 async function startServer() {
+  await loadLeaderboardFromDisk();
+
   const app = express();
   app.use(express.json({ limit: '32kb' }));
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, rooms: rooms.size });
+    res.json({ ok: true, rooms: rooms.size, leaderboardCount: leaderboardCache.length });
+  });
+
+  app.get('/api/leaderboard', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      entries: leaderboardCache.slice(0, PUBLIC_TOP_LIMIT),
+      total: leaderboardCache.length,
+    });
+  });
+
+  app.post('/api/leaderboard', async (req, res) => {
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!allowScoreSubmit(clientIp)) {
+      res.status(429).json({ error: 'Слишком много отправок. Подождите пару минут.' });
+      return;
+    }
+
+    const body = req.body as Record<string, unknown> | undefined;
+    if (!body || typeof body !== 'object') {
+      res.status(400).json({ error: 'Некорректные данные.' });
+      return;
+    }
+
+    const name = sanitizePlayerName(body.name);
+    if (!name) {
+      res.status(400).json({ error: 'Введите имя от 1 до 18 символов.' });
+      return;
+    }
+
+    if (typeof body.score !== 'number' || !Number.isFinite(body.score) || body.score < 0 || body.score > 99_999_999) {
+      res.status(400).json({ error: 'Некорректное значение очков.' });
+      return;
+    }
+    const score = Math.floor(body.score);
+
+    const heroes = Array.isArray(body.heroes)
+      ? body.heroes.filter((h): h is string => typeof h === 'string' && VALID_HEROES.has(h)).slice(0, 2)
+      : [];
+    const difficulty =
+      typeof body.difficulty === 'string' && VALID_DIFFICULTIES.has(body.difficulty)
+        ? (body.difficulty as 'easy' | 'normal' | 'hard')
+        : 'normal';
+    const mode =
+      typeof body.mode === 'string' && VALID_MODES.has(body.mode)
+        ? (body.mode as '1p' | '2p' | 'online')
+        : '1p';
+
+    const entry: LeaderboardRecord = {
+      id: crypto.randomUUID(),
+      name,
+      score,
+      heroes: heroes.length > 0 ? heroes : ['vadek'],
+      difficulty,
+      mode,
+      createdAt: Date.now(),
+    };
+
+    const nextList = sortLeaderboard([...leaderboardCache, entry]).slice(0, MAX_STORED_SCORES);
+    leaderboardCache = nextList;
+    await persistLeaderboardToDisk(leaderboardCache);
+
+    const rankIdx = leaderboardCache.findIndex((item) => item.id === entry.id);
+    res.status(201).json({
+      entry,
+      rank: rankIdx >= 0 ? rankIdx + 1 : null,
+      entries: leaderboardCache.slice(0, PUBLIC_TOP_LIMIT),
+      total: leaderboardCache.length,
+    });
   });
 
   const httpServer = http.createServer(app);

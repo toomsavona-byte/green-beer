@@ -1,4 +1,5 @@
 import { HERO_MAP, HEROES, WEAPON_MAP } from './data';
+import { getGroundElevation, isDaylightLevel, tileHash } from './terrain';
 import { CutsceneDef, EnemyKind, HeroId, LevelDef, WeaponId } from './types';
 
 export const VIRTUAL_W = 480;
@@ -224,6 +225,8 @@ export interface HeroRenderOpts {
   invulnTimer: number;
   weaponId: WeaponId;
   onBike: boolean;
+  bikePitch?: number;
+  throttling?: boolean;
   playerSlot?: 1 | 2;
   scale?: number;
 }
@@ -372,14 +375,35 @@ function drawArticulatedLeg(
     ctx.restore();
   }
 
-  // Shin
+  // Shin + realistic trouser cuff hem & fabric crease behind knee
   drawTaperedLimb(ctx, kneeX, kneeY, ankleX, ankleY, shinR, shinR * 0.78, pantsCol, pantsHi, pantsSh, 1.15);
+  ctx.strokeStyle = pantsSh;
+  ctx.lineWidth = 0.85;
+  ctx.beginPath();
+  ctx.moveTo(kneeX - 1.8, kneeY + 0.4);
+  ctx.lineTo(kneeX + 1.2, kneeY + 1.2);
+  ctx.stroke();
 
-  // Knee detail: ripped jeans skin peek on Vadek, armored knee pad on Koren/Zavod
+  // Pant hem cuff above boot
+  if (heroId !== 'ded') {
+    ctx.strokeStyle = pantsHi;
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.moveTo(ankleX - 2.2, ankleY - 2.8);
+    ctx.lineTo(ankleX + 2.2, ankleY - 2.6);
+    ctx.stroke();
+  }
+
+  // Knee detail: ripped jeans skin peek on Vadek, armored knee pad on Koren/Zavod, subtle knee highlight on others
   if (heroId === 'vadek') {
     drawInkEllipse(ctx, kneeX + 0.8, kneeY, 1.7, 1.1, 0, skinCol, undefined, undefined, 0.7);
   } else if (heroId === 'koren' || heroId === 'zavod_killer') {
     drawInkEllipse(ctx, kneeX + 0.8, kneeY, 2.4, 2.1, -hipAngle * 0.4, '#2F3847', '#64748B', '#0F172A', 1.0);
+  } else if (!isBack) {
+    ctx.fillStyle = pantsHi;
+    ctx.beginPath();
+    ctx.ellipse(kneeX + 1.1, kneeY - 0.5, 1.1, 1.7, 0.15, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   // Sculpted Foot / Combat Boot / Sneaker / Flip-Flop
@@ -409,7 +433,7 @@ function drawArticulatedLeg(
     ctx.lineTo(4.2, 1.8);
     ctx.stroke();
   } else if (heroId === 'hooper') {
-    // Classic red-and-white arcade sneakers
+    // Classic red-and-white arcade sneakers with laces
     drawRoundedPoly(
       ctx,
       [
@@ -423,12 +447,13 @@ function drawArticulatedLeg(
       INK,
       1.1
     );
-    // White toe cap & thick sneaker sole
     drawRoundedRect(ctx, -3.2, 1.7, 9.4, 1.5, 0.5, '#F8FAFC', INK, 0.8);
     ctx.fillStyle = '#F8FAFC';
     ctx.fillRect(3.6, 0.4, 2.2, 1.3);
+    ctx.fillRect(1.2, -1.2, 1.6, 0.7);
+    ctx.fillRect(2.1, -0.2, 1.6, 0.7);
   } else {
-    // Heavy laced combat boot with treaded sole
+    // Heavy laced combat boot with treaded welt sole & metallic eyelets
     drawRoundedPoly(
       ctx,
       [
@@ -443,12 +468,15 @@ function drawArticulatedLeg(
       INK,
       1.15
     );
-    // Specular leather toe shine
+    // Specular leather toe shine & boot laces
     ctx.fillStyle = bootHi;
     ctx.beginPath();
     ctx.ellipse(3.6, 0.8, 1.9, 0.8, 0.25, 0, Math.PI * 2);
     ctx.fill();
-    // Sole ridge
+    ctx.fillStyle = '#94A3B8';
+    ctx.fillRect(1.6, -2.5, 1.4, 0.6);
+    ctx.fillRect(2.2, -1.3, 1.4, 0.6);
+    // Treaded sole ridge
     ctx.fillStyle = bootSh;
     ctx.fillRect(-3.0, 2.0, 9.2, 1.0);
   }
@@ -502,7 +530,7 @@ export function drawHeroSprite(ctx: CanvasRenderingContext2D, o: HeroRenderOpts)
   const vz = o.vz ?? 0;
 
   // ── FLUID MULTI-JOINT SKELETAL KINEMATICS ──
-  const runPhase = safeTime * 11.8;
+  const runPhase = safeTime * 9.8;
   const breath = Math.sin(safeTime * 3.8);
   const meleeProgress = o.meleeTimer > 0 ? Math.max(0, Math.min(1, 1 - o.meleeTimer / 0.24)) : 0;
   const meleeStrike = o.meleeTimer > 0 ? Math.sin(meleeProgress * Math.PI) : 0;
@@ -541,18 +569,21 @@ export function drawHeroSprite(ctx: CanvasRenderingContext2D, o: HeroRenderOpts)
       bodyBob = -1.0;
     }
   } else if (o.moving) {
+    // Forward running kinematics:
+    // +cPhase bends knee UP during forward swing (d(hip)/dt > 0)
+    // and straightens leg during backward ground stance push-off (d(hip)/dt < 0)!
     const s = Math.sin(runPhase);
     const cPhase = Math.cos(runPhase);
-    frontHip = s * 0.7;
-    frontKnee = Math.max(0.08, -cPhase * 0.88 + 0.35);
-    frontFoot = Math.max(-0.25, Math.min(0.32, -s * 0.28));
+    frontHip = s * 0.72;
+    frontKnee = Math.max(0.06, cPhase * 0.88 + 0.34);
+    frontFoot = Math.max(-0.24, Math.min(0.32, -s * 0.22 + Math.max(0, cPhase) * 0.14));
 
-    backHip = -s * 0.7;
-    backKnee = Math.max(0.08, cPhase * 0.88 + 0.35);
-    backFoot = Math.max(-0.25, Math.min(0.32, s * 0.28));
+    backHip = -s * 0.72;
+    backKnee = Math.max(0.06, -cPhase * 0.88 + 0.34);
+    backFoot = Math.max(-0.24, Math.min(0.32, s * 0.22 + Math.max(0, -cPhase) * 0.14));
 
-    bodyBob = -Math.abs(s) * 2.5;
-    torsoLean = 0.15 + Math.abs(s) * 0.04 + hurtTilt;
+    bodyBob = -Math.abs(cPhase) * 2.2;
+    torsoLean = 0.14 + Math.abs(s) * 0.04 + hurtTilt;
   } else if (o.meleeTimer > 0) {
     // Combat lunge during melee punch!
     frontHip = 0.45 + meleeStrike * 0.2;
@@ -758,13 +789,27 @@ export function drawHeroSprite(ctx: CanvasRenderingContext2D, o: HeroRenderOpts)
       1.25
     );
 
-    // Directional left neon rim light + right core shadow on torso
-    ctx.strokeStyle = `${prof.rimColor}77`;
+    // Directional left highlight + right garment shadow & realistic waist hem seam
+    ctx.strokeStyle = `${prof.rimColor}66`;
     ctx.lineWidth = 1.0;
     ctx.beginPath();
     ctx.moveTo(-sHalf + 1.2, -torsoH + 2.6);
     ctx.lineTo(-wHalf + 1.2, -2.5);
     ctx.stroke();
+
+    // Subtle fabric fold shading across chest/ribs + belt strap
+    ctx.strokeStyle = sh(prof.jacketColor);
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(wHalf - 1.4, -torsoH + 4);
+    ctx.lineTo(wHalf - 2.2, -3.2);
+    ctx.moveTo(-wHalf + 1.6, -5.2);
+    ctx.lineTo(wHalf - 1.6, -5.0);
+    ctx.stroke();
+    // Leather belt & metallic buckle at waist
+    drawRoundedRect(ctx, -wHalf + 0.5, -3.2, wHalf * 2 - 1, 2.2, 0.5, '#18181B', INK, 0.7);
+    ctx.fillStyle = '#D4D4D8';
+    ctx.fillRect(0.2, -3.0, 2.6, 1.8);
 
     // Inner chest shirt / muscular neckline
     if (o.heroId === 'vadek' || o.heroId === 'sandro' || o.heroId === 'bo') {
@@ -1430,181 +1475,280 @@ function drawHeroOnBike(
   const hero = HERO_MAP[o.heroId];
   const p = hero.palette;
   const safeTime = Math.max(0, o.animTime);
-  const wheelAngle = safeTime * 22;
-  const rumble = Math.sin(safeTime * 42) * 0.85;
+  const wheelAngle = safeTime * (o.throttling ? 28 : 18);
+  const rumble = Math.sin(safeTime * (o.throttling ? 54 : 34)) * (o.throttling ? 1.15 : 0.65);
 
-  // Neon underglow reflection on highway
-  ctx.fillStyle = `${p.bikeAccent}38`;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 29, 5.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Blazing afterburner exhaust flame cone
-  const flameLen = 11 + Math.sin(safeTime * 55) * 4.5;
-  drawRoundedPoly(
-    ctx,
-    [
-      [-23, -11.5 + rumble],
-      [-23 - flameLen, -9 + rumble],
-      [-23, -6.5 + rumble],
-    ],
-    '#FF2A85',
-    'transparent',
-    0
-  );
-  drawRoundedPoly(
-    ctx,
-    [
-      [-23, -10.4 + rumble],
-      [-23 - flameLen * 0.65, -9 + rumble],
-      [-23, -7.6 + rumble],
-    ],
-    '#FEF08A',
-    'transparent',
-    0
-  );
-
-  // Smooth circular spinning motorcycle wheels with metallic rims & spokes
-  for (const wx of [-18, 20]) {
-    const wy = -8;
-    drawInkEllipse(ctx, wx, wy, 8.2, 8.2, 0, '#111827', '#374151', INK, 1.3);
-    drawInkEllipse(ctx, wx, wy, 4.8, 4.8, 0, '#334155', '#94A3B8', '#0F172A', 1.0);
-    ctx.strokeStyle = p.bikeAccent;
-    ctx.lineWidth = 1.2;
-    for (let s = 0; s < 3; s++) {
-      const a = wheelAngle + (s * Math.PI) / 3;
-      ctx.beginPath();
-      ctx.moveTo(wx - Math.cos(a) * 4.2, wy - Math.sin(a) * 4.2);
-      ctx.lineTo(wx + Math.cos(a) * 4.2, wy + Math.sin(a) * 4.2);
-      ctx.stroke();
-    }
-    drawInkEllipse(ctx, wx, wy, 1.6, 1.6, 0, '#E2E8F0', undefined, undefined, 0.8);
+  ctx.save();
+  // Tilt cruiser naturally with highway hills & dips!
+  if (o.bikePitch) {
+    ctx.rotate(Math.max(-0.28, Math.min(0.28, o.bikePitch)));
   }
 
-  // Chrome exhaust pipe & engine block
-  drawTaperedLimb(ctx, -23, -9 + rumble, -3, -10 + rumble, 1.8, 2.2, '#94A3B8', '#F8FAFC', '#334155', 1.0);
-  drawRoundedRect(ctx, -9, -15 + rumble, 17, 7.5, 1.8, '#283140', INK, 1.1);
+  // Warm exhaust haze / chrome throttle burst behind twin slash-cut pipes
+  if (o.throttling) {
+    const puff = (safeTime * 22) % 10;
+    ctx.fillStyle = `rgba(226, 232, 240, ${0.38 * (1 - puff / 10)})`;
+    ctx.beginPath();
+    ctx.arc(-30 - puff * 1.4, -7 + rumble, 3.2 + puff * 0.35, 0, Math.PI * 2);
+    ctx.arc(-33 - puff * 1.1, -11 + rumble, 2.5 + puff * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    // Subtle orange-amber exhaust backfire flash
+    if (Math.floor(safeTime * 22) % 3 === 0) {
+      drawRoundedPoly(
+        ctx,
+        [
+          [-28, -8.5 + rumble],
+          [-34, -7.2 + rumble],
+          [-28, -5.8 + rumble],
+        ],
+        '#FB923C',
+        'transparent',
+        0
+      );
+    }
+  }
 
-  // Sculpted Cyber-Streetfighter Fairing & Fuel Tank
+  // ── 1. WIDE CRUISER SPOKED WHEELS (Whitewall + Gleaming Chrome Rims) ──
+  const wheels = [
+    { wx: -20, wy: -8.5, r: 8.6 }, // Fat rear Harley tire
+    { wx: 23, wy: -8.5, r: 8.2 },  // Raked-out front chopper wheel
+  ];
+  for (const w of wheels) {
+    // Deep rubber tire
+    drawInkEllipse(ctx, w.wx, w.wy, w.r, w.r, 0, '#111318', '#334155', INK, 1.35);
+    // Classic whitewall ring
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 1.15;
+    ctx.beginPath();
+    ctx.arc(w.wx, w.wy, w.r - 2.3, 0, Math.PI * 2);
+    ctx.stroke();
+    // Polished chrome wheel rim
+    drawInkEllipse(ctx, w.wx, w.wy, w.r - 3.3, w.r - 3.3, 0, '#94A3B8', '#FFFFFF', '#475569', 0.9);
+    // Spinning chrome wire spokes
+    ctx.strokeStyle = '#F8FAFC';
+    ctx.lineWidth = 0.85;
+    for (let s = 0; s < 4; s++) {
+      const a = wheelAngle + (s * Math.PI) / 4;
+      ctx.beginPath();
+      ctx.moveTo(w.wx - Math.cos(a) * (w.r - 3.6), w.wy - Math.sin(a) * (w.r - 3.6));
+      ctx.lineTo(w.wx + Math.cos(a) * (w.r - 3.6), w.wy + Math.sin(a) * (w.r - 3.6));
+      ctx.stroke();
+    }
+    // Chrome axle hub
+    drawInkEllipse(ctx, w.wx, w.wy, 2.0, 2.0, 0, '#E2E8F0', '#FFFFFF', '#475569', 0.8);
+  }
+
+  // ── 2. CHROME REAR & FRONT FENDERS + LOW CRUISER FRAME ──
+  // Rear curved metallic fender over back wheel + ruby taillight
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 4.2;
+  ctx.beginPath();
+  ctx.arc(-20, -8.5 + rumble * 0.4, 9.6, Math.PI * 1.05, Math.PI * 1.88);
+  ctx.stroke();
+  ctx.strokeStyle = c(p.bikeMain);
+  ctx.lineWidth = 2.6;
+  ctx.beginPath();
+  ctx.arc(-20, -8.5 + rumble * 0.4, 9.6, Math.PI * 1.08, Math.PI * 1.86);
+  ctx.stroke();
+  drawRoundedRect(ctx, -30, -14.5 + rumble * 0.5, 3.2, 3.2, 0.8, '#EF4444', INK, 0.8);
+
+  // Chrome front fender over front tire
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  ctx.arc(23, -8.5 + rumble * 0.4, 9.2, Math.PI * 1.15, Math.PI * 1.8);
+  ctx.stroke();
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.lineWidth = 1.9;
+  ctx.beginPath();
+  ctx.arc(23, -8.5 + rumble * 0.4, 9.2, Math.PI * 1.18, Math.PI * 1.78);
+  ctx.stroke();
+
+  // Heavy black tubular steel cruiser frame & chrome swingarm
+  drawTaperedLimb(ctx, -20, -8.5 + rumble * 0.3, -6, -12 + rumble, 2.2, 2.0, '#1E293B', '#64748B', INK, 1.0);
+  drawTaperedLimb(ctx, -6, -12 + rumble, 12, -24 + rumble, 2.0, 1.8, '#1E293B', '#64748B', INK, 1.0);
+  drawTaperedLimb(ctx, -4, -7 + rumble, 11, -8 + rumble, 2.1, 1.9, '#334155', '#CBD5E1', INK, 1.0);
+
+  // ── 3. ICONIC HARLEY-DAVIDSON CHROME V-TWIN ENGINE ──
+  // Crankcase / chrome primary cover
+  drawRoundedRect(ctx, -8, -12.5 + rumble, 14, 6.2, 2.8, '#CBD5E1', INK, 1.1);
+  px(ctx, -5, -11.2 + rumble, 8, 2.0, '#FFFFFF');
+  // Rear V-cylinder (tilted left)
+  ctx.save();
+  ctx.translate(-3.5, -13 + rumble);
+  ctx.rotate(-0.36);
+  drawRoundedRect(ctx, -3.5, -8.5, 7, 8.5, 1.2, '#475569', INK, 1.0);
+  for (let fy = -7.2; fy <= -1.5; fy += 1.9) px(ctx, -3.2, fy, 6.4, 0.9, '#F8FAFC');
+  drawRoundedRect(ctx, -4.0, -9.8, 8, 2.2, 0.8, '#E2E8F0', INK, 0.8);
+  ctx.restore();
+  // Front V-cylinder (tilted right)
+  ctx.save();
+  ctx.translate(3.2, -13 + rumble);
+  ctx.rotate(0.36);
+  drawRoundedRect(ctx, -3.5, -8.5, 7, 8.5, 1.2, '#475569', INK, 1.0);
+  for (let fy = -7.2; fy <= -1.5; fy += 1.9) px(ctx, -3.2, fy, 6.4, 0.9, '#F8FAFC');
+  drawRoundedRect(ctx, -4.0, -9.8, 8, 2.2, 0.8, '#E2E8F0', INK, 0.8);
+  ctx.restore();
+  // Round chrome air-cleaner cover between V cylinders
+  drawInkEllipse(ctx, 0, -15.5 + rumble, 3.6, 3.2, 0, '#E2E8F0', '#FFFFFF', '#475569', 1.0);
+  drawInkEllipse(ctx, 0, -15.5 + rumble, 1.3, 1.3, 0, '#1E293B', undefined, undefined, 0.6);
+
+  // ── 4. DUAL GLEAMING CHROME SLASH-CUT EXHAUST PIPES ──
+  drawTaperedLimb(ctx, 4, -14 + rumble, -2, -10.5 + rumble, 1.5, 1.5, '#CBD5E1', '#FFFFFF', '#475569', 0.95);
+  drawTaperedLimb(ctx, -2, -10.5 + rumble, -28, -10.5 + rumble, 1.7, 1.9, '#E2E8F0', '#FFFFFF', '#475569', 1.05);
+  drawTaperedLimb(ctx, 1, -9 + rumble, -27, -7.0 + rumble, 1.7, 1.9, '#CBD5E1', '#FFFFFF', '#334155', 1.05);
+
+  // ── 5. CLASSIC TEARDROP FUEL TANK + CHROME BADGE ──
   drawRoundedPoly(
     ctx,
     [
-      [-20, -16 + rumble],
-      [-12, -21 + rumble],
-      [6, -24 + rumble],
-      [21, -20 + rumble],
-      [24, -14 + rumble],
-      [8, -11 + rumble],
-      [-15, -12 + rumble],
+      [-6, -18.5 + rumble],
+      [-1, -24.5 + rumble],
+      [10, -25.8 + rumble],
+      [15, -22.2 + rumble],
+      [11, -18.0 + rumble],
+      [-3, -17.5 + rumble],
     ],
     c(p.bikeMain),
     INK,
-    1.3
+    1.25
   );
-  // Racing neon stripe
+  // Glossy metallic highlight & chrome tank badge
   drawRoundedPoly(
     ctx,
     [
-      [-11, -19 + rumble],
-      [7, -22 + rumble],
-      [19, -18 + rumble],
-      [6, -17 + rumble],
+      [0, -23.5 + rumble],
+      [9.5, -24.4 + rumble],
+      [12.5, -22.2 + rumble],
+      [2, -21.8 + rumble],
     ],
-    c(p.bikeAccent),
-    INK,
-    0.8
+    hi(p.bikeMain),
+    'transparent',
+    0
   );
+  drawRoundedRect(ctx, 2, -22.4 + rumble, 6.5, 2.4, 0.7, '#F8FAFC', INK, 0.7);
+  px(ctx, 3.2, -21.6 + rumble, 4, 0.9, c(p.bikeAccent));
 
-  // Angled front fork & bright headlight cone
-  drawTaperedLimb(ctx, 13, -25 + rumble, 20, -8, 2.0, 1.6, '#CBD5E1', '#FFFFFF', '#475569', 1.1);
-  drawInkEllipse(ctx, 21.5, -19.5 + rumble, 3.2, 2.8, 0.2, '#FEF08A', '#FFFFFF', '#D97706', 1.0);
-  ctx.fillStyle = 'rgba(254, 240, 138, 0.18)';
+  // ── 6. LONG RAKED-OUT CHROME FORKS, HIGH APE-HANGER HANDLEBARS & CHROME HEADLIGHT ──
+  // Twin long telescopic chrome fork tubes (raked chopper angle!)
+  drawTaperedLimb(ctx, 11.5, -27.5 + rumble, 23, -8.5, 2.0, 1.6, '#E2E8F0', '#FFFFFF', '#64748B', 1.1);
+  drawTaperedLimb(ctx, 13.5, -26.5 + rumble, 24.5, -9.0, 1.6, 1.3, '#CBD5E1', '#FFFFFF', '#475569', 0.9);
+  // Chrome triple-tree clamp & tall cruiser handlebars reaching back toward rider!
+  drawTaperedLimb(ctx, 12, -27.5 + rumble, 8.5, -34.5 + rumble, 1.4, 1.2, '#F8FAFC', '#FFFFFF', '#475569', 1.0);
+  drawTaperedLimb(ctx, 8.5, -34.5 + rumble, 4.5, -33.2 + rumble, 1.4, 1.4, '#18181B', '#52525B', INK, 0.95);
+  // Chrome mirror stalk
+  drawTaperedLimb(ctx, 9, -34.5 + rumble, 11, -38 + rumble, 0.7, 0.7, '#E2E8F0', '#FFFFFF', '#475569', 0.7);
+  drawInkEllipse(ctx, 11.8, -38.5 + rumble, 2.1, 1.3, -0.2, '#E2E8F0', '#FFFFFF', INK, 0.8);
+
+  // Classic round chrome Harley headlight bullet + warm daylight/highway beam
+  drawInkEllipse(ctx, 17.5, -23.5 + rumble, 3.8, 3.4, 0.1, '#E2E8F0', '#FFFFFF', '#475569', 1.1);
+  drawInkEllipse(ctx, 20.0, -23.5 + rumble, 2.0, 2.9, 0, '#FEF08A', '#FFFFFF', '#D97706', 0.85);
+  ctx.fillStyle = 'rgba(254, 240, 138, 0.16)';
   ctx.beginPath();
-  ctx.moveTo(24, -21 + rumble);
-  ctx.lineTo(88, -33 + rumble);
-  ctx.lineTo(88, -3 + rumble);
-  ctx.lineTo(24, -17 + rumble);
+  ctx.moveTo(21.5, -25.5 + rumble);
+  ctx.lineTo(74, -33 + rumble);
+  ctx.lineTo(74, -8 + rumble);
+  ctx.lineTo(21.5, -21.5 + rumble);
   ctx.closePath();
   ctx.fill();
 
-  // Signature hero bike mods
-  if (o.heroId === 'sandro') {
-    drawRoundedRect(ctx, -26, -30 + rumble, 9, 13, 1.5, '#18181B', INK, 1.1);
-    drawInkEllipse(ctx, -21.5, -25 + rumble, 2.8, 2.8, 0, '#C084FC', '#F5D0FE', '#581C87', 0.9);
-    drawInkEllipse(ctx, -21.5, -20 + rumble, 2.2, 2.2, 0, '#E879F9', '#FFFFFF', '#701A75', 0.8);
-  } else if (o.heroId === 'ded') {
-    drawRoundedRect(ctx, -14, -13 + rumble, 24, 6.5, 2.0, '#9D174D', INK, 1.1);
-    drawRoundedRect(ctx, -6, -21 + rumble, 5, 9, 1.5, '#06B6D4', INK, 1.0);
-    ctx.fillStyle = 'rgba(57, 255, 20, 0.42)';
-    ctx.beginPath();
-    ctx.arc(-18 - ((safeTime * 28) % 14), -25 + Math.sin(safeTime * 9) * 2, 5.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Leaning articulated rider matching hero's jacket & head!
-  // Rider leg bent on footpeg
-  drawTaperedLimb(ctx, -6, -20 + rumble, 2, -14 + rumble, 3.0, 2.5, c(prof.pantsColor), hi(prof.pantsColor), sh(prof.pantsColor), 1.1);
-  drawTaperedLimb(ctx, 2, -14 + rumble, -3, -8 + rumble, 2.5, 2.1, c(prof.bootColor), hi(prof.bootColor), INK, 1.1);
-  // Rider leaning torso
+  // ── 7. LOW LEATHER SADDLE + CHROME SISSY BAR + HERO MODS ──
+  // Low sculpted black leather saddle
   drawRoundedPoly(
     ctx,
     [
-      [-10, -20 + rumble],
-      [-5, -34 + rumble],
-      [6, -33 + rumble],
-      [2, -19 + rumble],
+      [-18, -17.5 + rumble],
+      [-11, -15.8 + rumble],
+      [-3, -17.2 + rumble],
+      [-5, -20.2 + rumble],
+      [-17, -21.2 + rumble],
+    ],
+    '#18181B',
+    INK,
+    1.15
+  );
+  // Iconic tall chrome chopper sissy bar backrest
+  drawTaperedLimb(ctx, -18.5, -18 + rumble, -23.5, -34 + rumble, 1.3, 1.1, '#E2E8F0', '#FFFFFF', '#475569', 1.0);
+  drawRoundedRect(ctx, -23.8, -31 + rumble, 4.2, 6.5, 1.2, '#1F242D', INK, 0.9);
+
+  // Signature hero chopper mods
+  if (o.heroId === 'sandro') {
+    // Bass amp saddlebag + chrome speaker
+    drawRoundedRect(ctx, -28, -24 + rumble, 9, 11, 1.5, '#18181B', INK, 1.0);
+    drawInkEllipse(ctx, -23.5, -18.5 + rumble, 2.8, 2.8, 0, '#C084FC', '#F5D0FE', '#581C87', 0.85);
+  } else if (o.heroId === 'ded') {
+    // Classic cruiser saddlebag hookah smoking into the breeze
+    drawRoundedRect(ctx, -28, -21 + rumble, 8, 9, 1.6, '#9D174D', INK, 1.0);
+    ctx.fillStyle = 'rgba(226, 232, 240, 0.35)';
+    ctx.beginPath();
+    ctx.arc(-32 - ((safeTime * 24) % 12), -24 + Math.sin(safeTime * 8) * 2, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // ── 8. AUTHENTIC LAID-BACK HARLEY BIKER POSTURE! ──
+  // Legs stretched FORWARD onto highway pegs (classic cruiser stance!)
+  drawTaperedLimb(ctx, -9, -18 + rumble, 3.5, -14.5 + rumble, 3.2, 2.7, c(prof.pantsColor), hi(prof.pantsColor), sh(prof.pantsColor), 1.15);
+  drawTaperedLimb(ctx, 3.5, -14.5 + rumble, 11.5, -9.5 + rumble, 2.6, 2.2, c(prof.pantsColor), hi(prof.pantsColor), sh(prof.pantsColor), 1.15);
+  // Boot resting forward on chrome highway footpeg
+  drawRoundedRect(ctx, 10.2, -11.5 + rumble, 6.2, 3.8, 1.0, c(prof.bootColor), INK, 1.0);
+  drawInkEllipse(ctx, 11.8, -8.5 + rumble, 1.5, 1.2, 0, '#E2E8F0', '#FFFFFF', INK, 0.7);
+
+  // Rider leaning slightly BACK against low saddle (laid-back Harley cruiser silhouette!)
+  drawRoundedPoly(
+    ctx,
+    [
+      [-14, -18 + rumble],
+      [-15.5, -33 + rumble],
+      [-4.5, -33.5 + rumble],
+      [-4, -18 + rumble],
     ],
     c(prof.jacketColor),
     INK,
-    1.2
+    1.25
   );
-  // Rider head
-  drawInkEllipse(ctx, 1, -40 + rumble, 5.2, 5.6, 0.1, c(prof.skinColor), hi(prof.skinColor), sh(prof.skinColor), 1.2);
+  // Jacket lapel / collar highlight
+  ctx.strokeStyle = hi(prof.jacketColor);
+  ctx.lineWidth = 1.0;
+  ctx.beginPath();
+  ctx.moveTo(-6, -32.5 + rumble);
+  ctx.lineTo(-5, -21 + rumble);
+  ctx.stroke();
+
+  // Left arm reaching FORWARD & UP to grip the high chrome Harley handlebars!
+  drawTaperedLimb(ctx, -7, -30.5 + rumble, 0.5, -31.5 + rumble, 2.4, 2.0, c(prof.jacketColor), hi(prof.jacketColor), sh(prof.jacketColor), 1.05);
+  drawTaperedLimb(ctx, 0.5, -31.5 + rumble, 5.8, -33.2 + rumble, 2.0, 1.7, prof.bareArms ? c(prof.skinColor) : c(prof.jacketColor), hi(prof.jacketColor), sh(prof.jacketColor), 1.0);
+  drawInkEllipse(ctx, 6.0, -33.2 + rumble, 2.0, 1.8, 0, '#18181B', '#52525B', INK, 0.8);
+
+  // Rider head (proud upright/reclined cruiser stance)
+  drawInkEllipse(ctx, -9.5, -39.5 + rumble, 5.2, 5.6, -0.08, c(prof.skinColor), hi(prof.skinColor), sh(prof.skinColor), 1.2);
+  // Biker sunglasses glint on highway!
+  if (o.heroId !== 'koren' && o.heroId !== 'bo') {
+    drawRoundedRect(ctx, -8.2, -41.2 + rumble, 5.2, 2.2, 0.6, '#0F172A', '#94A3B8', 0.6);
+  }
   if (o.heroId === 'zavod_killer') {
-    drawRoundedPoly(
-      ctx,
-      [
-        [-5, -42 + rumble],
-        [-3, -47 + rumble],
-        [5, -46 + rumble],
-        [7, -41 + rumble],
-      ],
-      '#FACC15',
-      INK,
-      1.15
-    );
+    drawRoundedPoly(ctx, [[-15.5, -41.5 + rumble], [-13.5, -46.5 + rumble], [-5.5, -45.5 + rumble], [-3.5, -40.5 + rumble]], '#FACC15', INK, 1.15);
   } else if (o.heroId === 'koren') {
-    drawRoundedRect(ctx, -1, -42.5 + rumble, 7, 3.2, 0.9, '#00E5FF', INK, 0.95);
+    drawRoundedRect(ctx, -11.5, -42 + rumble, 7, 3.2, 0.9, '#00E5FF', INK, 0.95);
   } else if (o.heroId === 'hooper') {
-    drawRoundedPoly(ctx, [[-8, -42 + rumble], [-3, -46 + rumble], [5, -45 + rumble], [6, -42 + rumble]], '#DC2626', INK, 1.0);
+    drawRoundedPoly(ctx, [[-18.5, -41.5 + rumble], [-13.5, -45.5 + rumble], [-5.5, -44.5 + rumble], [-4.5, -41.5 + rumble]], '#DC2626', INK, 1.0);
   } else if (o.heroId === 'bo') {
-    drawRoundedRect(ctx, 0, -42 + rumble, 6.2, 2.6, 0.6, '#0F172A', INK, 0.9);
+    drawRoundedRect(ctx, -10.5, -41.5 + rumble, 6.2, 2.6, 0.6, '#0F172A', INK, 0.9);
     ctx.fillStyle = '#00E5FF';
-    ctx.fillRect(1.2, -41.4 + rumble, 4.2, 1.4);
+    ctx.fillRect(-9.3, -40.9 + rumble, 4.2, 1.4);
   } else {
-    drawRoundedPoly(
-      ctx,
-      [
-        [-5, -42 + rumble],
-        [-4, -46 + rumble],
-        [5, -45.5 + rumble],
-        [6, -42 + rumble],
-      ],
-      p.hair,
-      INK,
-      1.05
-    );
+    drawRoundedPoly(ctx, [[-15.5, -41.5 + rumble], [-14.5, -45.5 + rumble], [-5.5, -45.0 + rumble], [-4.5, -41.5 + rumble]], p.hair, INK, 1.05);
   }
 
-  // 8-direction mounted weapon
+  // Right arm aiming mounted/handheld weapon forward!
   const localAimX = o.aimX * o.facing;
-  const angle = Math.atan2(o.aimY, Math.max(0.01, localAimX));
+  const angle = Math.atan2(o.aimY, Math.max(0.25, localAimX));
   ctx.save();
-  ctx.translate(2, -29 + rumble);
+  ctx.translate(-5, -28.5 + rumble);
   ctx.rotate(angle);
   drawWeaponInHand(ctx, o.weaponId, 4, -3, o.shootTimer > 0, safeTime);
   ctx.restore();
 
+  ctx.restore();
   void flash;
 }
 
@@ -1802,7 +1946,7 @@ export function drawWeaponInHand(
 
 export function drawPickupSprite(
   ctx: CanvasRenderingContext2D,
-  kind: 'beer' | 'weapon',
+  kind: 'beer' | 'beer_bottle' | 'weapon',
   x: number,
   y: number,
   t: number,
@@ -1812,24 +1956,63 @@ export function drawPickupSprite(
   ctx.save();
   ctx.translate(Math.round(x), Math.round(y));
 
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillStyle = 'rgba(0,0,0,0.48)';
   ctx.beginPath();
-  ctx.ellipse(0, 2, 11, 3.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 2, kind === 'beer_bottle' ? 8.5 : 11, 3.4, 0, 0, Math.PI * 2);
   ctx.fill();
 
   if (kind === 'beer') {
-    // Glowing golden classic beer mug with frothy foam
-    ctx.strokeStyle = 'rgba(255, 176, 0, 0.7)';
-    ctx.lineWidth = 1.5;
+    // Full Frothy Glass Beer Mug = FULL HP Restore!
+    ctx.strokeStyle = 'rgba(255, 176, 0, 0.85)';
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.arc(0, -8 + bob, 11 + Math.sin(t * 8) * 1.5, 0, Math.PI * 2);
+    ctx.arc(0, -9 + bob, 12.5 + Math.sin(t * 8) * 1.6, 0, Math.PI * 2);
     ctx.stroke();
 
-    box(ctx, -6, -15 + bob, 11, 14, '#D97706', '#FCD34D', '#78350F');
-    px(ctx, -4, -13 + bob, 2, 10, '#FEF08A'); // glass highlight
-    box(ctx, -7, -18 + bob, 13, 5, '#FEF9C3', '#FFFFFF', '#E5E7EB'); // foam crown
-    box(ctx, 5, -13 + bob, 4, 9, '#F59E0B', '#FEF08A', '#92400E'); // handle
-    px(ctx, 6, -11 + bob, 2, 5, '#090C11');
+    // Heavy faceted glass mug body
+    box(ctx, -6.5, -16 + bob, 12, 15, '#D97706', '#FCD34D', '#78350F');
+    px(ctx, -4.5, -14 + bob, 2.2, 11, '#FEF08A'); // bright glass vertical highlight
+    px(ctx, 1, -14 + bob, 1.4, 11, '#B45309');    // glass facet rib
+    // Thick overflowing creamy foam crown
+    box(ctx, -7.5, -20 + bob, 14, 5.5, '#FEF9C3', '#FFFFFF', '#CBD5E1');
+    px(ctx, -5, -15 + bob, 2.5, 3, '#FEF9C3'); // foam drip
+    // Curved glass handle
+    box(ctx, 5.5, -14 + bob, 4.5, 10, '#F59E0B', '#FEF08A', '#92400E');
+    px(ctx, 6.5, -12 + bob, 2.2, 6, '#090C11');
+    // Tiny FULL label above mug
+    ctx.fillStyle = '#090C11';
+    ctx.fillRect(-10, -28 + bob, 20, 7);
+    ctx.fillStyle = '#FACC15';
+    ctx.font = 'bold 5px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('FULL', 0, -22.5 + bob);
+    ctx.textAlign = 'left';
+  } else if (kind === 'beer_bottle') {
+    // Classic 0.33L Amber Glass Beer Bottle = +1 HP!
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.65)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(0, -10 + bob, 9.5 + Math.sin(t * 7) * 1.2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Bottle body (warm amber-brown glass)
+    box(ctx, -4, -12 + bob, 8, 12, '#92400E', '#F59E0B', '#451A03');
+    // Tapered bottle neck
+    box(ctx, -2.2, -19 + bob, 4.4, 7.5, '#B45309', '#FBBF24', '#451A03');
+    // Metallic gold crown cap
+    box(ctx, -2.6, -21 + bob, 5.2, 2.4, '#FACC15', '#FEF9C3', '#854D0E');
+    // Crisp white/amber label band + specular shine
+    px(ctx, -3.4, -9 + bob, 6.8, 5, '#FEF3C7');
+    px(ctx, -2.5, -7.5 + bob, 5, 1.8, '#D97706');
+    px(ctx, -2.8, -11.5 + bob, 1.2, 9.5, 'rgba(255,255,255,0.65)');
+    // Tiny 0.33 tag
+    ctx.fillStyle = '#090C11';
+    ctx.fillRect(-9, -29 + bob, 18, 7);
+    ctx.fillStyle = '#FEF08A';
+    ctx.font = 'bold 5px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('0.33', 0, -23.5 + bob);
+    ctx.textAlign = 'left';
   } else if (weaponId) {
     const w = WEAPON_MAP[weaponId];
     box(ctx, -14, -15 + bob, 28, 14, '#111827', w.color, '#090C11');
@@ -2124,36 +2307,74 @@ export function drawEnemySprite(ctx: CanvasRenderingContext2D, e: EnemyRenderOpt
     }
 
     case 'drone': {
-      const hover = Math.sin(t * 9) * 3.8;
+      // Combat Mini-Helicopter Attack Drone with spinning twin rotors & red laser targeting sight!
+      const hover = Math.sin(t * 9) * 3.2;
       const tint = e.hacked ? '#00E5FF' : '#FF2A85';
-      // Translucent spinning rotor blurs
-      ctx.fillStyle = 'rgba(203, 213, 225, 0.45)';
+      const by = -24 + hover; // aligned directly with combat plane & z=30 laser fire
+
+      // Laser targeting beam telegraph right before firing!
+      if (e.telegraphTimer > 0 && !e.hacked) {
+        ctx.strokeStyle = Math.floor(t * 24) % 2 === 0 ? 'rgba(255, 42, 133, 0.85)' : 'rgba(254, 240, 138, 0.9)';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(14, by + 5);
+        ctx.lineTo(135, by + 18);
+        ctx.stroke();
+      }
+
+      // Tail boom & miniature tail rotor
+      drawTaperedLimb(ctx, -10, by, -22, by - 3, 2.2, 1.2, c('#334155'), '#94A3B8', INK, 1.0);
+      ctx.fillStyle = 'rgba(226, 232, 240, 0.7)';
       ctx.beginPath();
-      ctx.ellipse(-12, -43 + hover, 7 + pulse * 2, 1.8, 0, 0, Math.PI * 2);
-      ctx.ellipse(12, -43 + hover, 7 + pulse * 2, 1.8, 0, 0, Math.PI * 2);
+      ctx.ellipse(-22, by - 3, 1.6, 5 + pulse * 1.2, 0, 0, Math.PI * 2);
       ctx.fill();
-      // Thruster struts
-      drawTaperedLimb(ctx, -6, -37 + hover, -12, -42 + hover, 1.6, 1.4, '#475569', '#CBD5E1', INK, 0.9);
-      drawTaperedLimb(ctx, 6, -37 + hover, 12, -42 + hover, 1.6, 1.4, '#475569', '#CBD5E1', INK, 0.9);
-      // Sleek curved hunter-killer body
+
+      // Main coaxial spinning helicopter rotor blades + hub mast
+      px(ctx, -1.2, by - 13, 2.4, 7, '#64748B');
+      ctx.fillStyle = 'rgba(203, 213, 225, 0.55)';
+      ctx.beginPath();
+      ctx.ellipse(0, by - 13, 18 + pulse * 3, 2.1, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#F8FAFC';
+      ctx.lineWidth = 1.1;
+      const bladeSpan = 16 * Math.cos(t * 36);
+      ctx.beginPath();
+      ctx.moveTo(-bladeSpan, by - 13);
+      ctx.lineTo(bladeSpan, by - 13);
+      ctx.stroke();
+
+      // Armored attack helicopter fuselage & canopy
       drawRoundedPoly(
         ctx,
         [
-          [-13, -36 + hover],
-          [-6, -42 + hover],
-          [8, -41 + hover],
-          [14, -35 + hover],
-          [7, -30 + hover],
-          [-8, -31 + hover],
+          [-12, by - 2],
+          [-6, by - 7],
+          [8, by - 6],
+          [15, by + 1],
+          [8, by + 6],
+          [-9, by + 5],
         ],
         c('#1E293B'),
         INK,
         1.25
       );
-      // Glowing predatory scanner eye
-      drawInkEllipse(ctx, 6, -36 + hover, 4.2, 2.6, 0, tint, '#FFFFFF', sh(tint), 0.9);
-      // Underslung blaster barrel
-      drawRoundedRect(ctx, 2, -31 + hover, 12, 3.2, 0.7, '#475569', INK, 0.9);
+      // Glowing predatory cockpit sensor visor
+      drawInkEllipse(ctx, 7, by - 1, 4.8, 2.9, 0.15, tint, '#FFFFFF', sh(tint), 0.9);
+      // Flashing strobe LED on fuselage
+      if (Math.floor(t * 8) % 2 === 0) {
+        px(ctx, -9, by - 5, 2.5, 2.5, e.hacked ? '#00E5FF' : '#FACC15');
+      }
+      // Landing skids + underslung twin rotary blaster pod
+      ctx.strokeStyle = '#64748B';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-7, by + 8);
+      ctx.lineTo(9, by + 8);
+      ctx.stroke();
+      drawRoundedRect(ctx, 2, by + 3.5, 13, 3.6, 0.8, '#475569', INK, 0.95);
+      if (e.telegraphTimer > 0) {
+        drawInkEllipse(ctx, 15.5, by + 5.2, 2.8, 2.8, 0, '#FEF08A', '#FFFFFF', '#FF2A85', 0.6);
+      }
       break;
     }
 
@@ -2919,6 +3140,63 @@ export function drawEnemySprite(ctx: CanvasRenderingContext2D, e: EnemyRenderOpt
   ctx.restore();
 }
 
+function drawSlopedGroundSurface(
+  ctx: CanvasRenderingContext2D,
+  levelId: LevelDef['id'],
+  camX: number,
+  roadFill: string,
+  curbTop: string,
+  curbShadow: string,
+  shoulderColor?: string
+): void {
+  const step = 12;
+  // Main sloped road/floor polygon
+  ctx.fillStyle = roadFill;
+  ctx.beginPath();
+  ctx.moveTo(0, VIRTUAL_H);
+  for (let x = 0; x <= VIRTUAL_W + step; x += step) {
+    const sx = Math.min(VIRTUAL_W, x);
+    const y = FLOOR_MIN_Y + getGroundElevation(levelId, camX + sx);
+    ctx.lineTo(sx, y);
+  }
+  ctx.lineTo(VIRTUAL_W, VIRTUAL_H);
+  ctx.closePath();
+  ctx.fill();
+
+  // Sloped sidewalk / curb ribbon along top edge of road
+  ctx.fillStyle = curbTop;
+  ctx.beginPath();
+  for (let x = 0; x <= VIRTUAL_W + step; x += step) {
+    const sx = Math.min(VIRTUAL_W, x);
+    const y = FLOOR_MIN_Y + getGroundElevation(levelId, camX + sx);
+    if (x === 0) ctx.moveTo(sx, y);
+    else ctx.lineTo(sx, y);
+  }
+  for (let x = VIRTUAL_W; x >= 0; x -= step) {
+    const y = FLOOR_MIN_Y + 6 + getGroundElevation(levelId, camX + x);
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Crisp curb drop shadow line
+  ctx.strokeStyle = curbShadow;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let x = 0; x <= VIRTUAL_W + step; x += step) {
+    const sx = Math.min(VIRTUAL_W, x);
+    const y = FLOOR_MIN_Y + 6.5 + getGroundElevation(levelId, camX + sx);
+    if (x === 0) ctx.moveTo(sx, y);
+    else ctx.lineTo(sx, y);
+  }
+  ctx.stroke();
+
+  if (shoulderColor) {
+    ctx.fillStyle = shoulderColor;
+    ctx.fillRect(0, VIRTUAL_H - 7, VIRTUAL_W, 7);
+  }
+}
+
 function drawCyberSkyline(
   ctx: CanvasRenderingContext2D,
   level: LevelDef,
@@ -2926,130 +3204,196 @@ function drawCyberSkyline(
   time: number,
   speedOverride?: number
 ): void {
-  // Layer 1: Deep cyberpunk night gradient + toxic atmospheric smog glow
-  const grad = ctx.createLinearGradient(0, 0, 0, FLOOR_MIN_Y);
-  grad.addColorStop(0, level.skyTop);
-  grad.addColorStop(0.68, level.skyBottom);
-  grad.addColorStop(1, level.id === 4 ? '#2C1248' : level.id === 2 ? '#2B112B' : '#0E2424');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, VIRTUAL_W, FLOOR_MIN_Y);
+  const daylight = isDaylightLevel(level.id);
 
-  // Giant neon smog moon / megacorp orbital glow
+  // Layer 1: Sky gradient (Bright sunlit daylight for Levels 2, 4, 6; Atmospheric night for Levels 1, 3, 5)
+  const grad = ctx.createLinearGradient(0, 0, 0, FLOOR_MIN_Y + 14);
+  grad.addColorStop(0, level.skyTop);
+  grad.addColorStop(0.66, level.skyBottom);
+  grad.addColorStop(
+    1,
+    daylight
+      ? level.id === 2
+        ? '#FEF3C7'
+        : level.id === 4
+          ? '#E0F2FE'
+          : '#F1F5F9'
+      : level.id === 3
+        ? '#0E2430'
+        : '#102028'
+  );
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, VIRTUAL_W, FLOOR_MIN_Y + 20);
+
+  if (daylight) {
+    // Radiant daytime sun + warm atmospheric glow
+    const sunX = level.id === 4 ? VIRTUAL_W - 102 : VIRTUAL_W - 76 - ((camX * 0.015) % 30);
+    const sunY = level.id === 6 ? 26 : 30;
+    const sunGrad = ctx.createRadialGradient(sunX, sunY, 4, sunX, sunY, 58);
+    sunGrad.addColorStop(0, 'rgba(255, 251, 235, 0.95)');
+    sunGrad.addColorStop(0.32, 'rgba(254, 240, 138, 0.45)');
+    sunGrad.addColorStop(1, 'rgba(254, 240, 138, 0)');
+    ctx.fillStyle = sunGrad;
+    ctx.beginPath();
+    ctx.arc(sunX, sunY, 58, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFFBEB';
+    ctx.beginPath();
+    ctx.arc(sunX, sunY, 12, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Fluffy sunlit cumulus clouds drifting smoothly
+    const cloudScroll = Math.floor((speedOverride ?? camX * 0.07) + time * 5);
+    for (let i = -1; i < 7; i++) {
+      const cx = i * 108 - (cloudScroll % 108);
+      const cy = 18 + (tileHash(i, level.id * 7) % 3) * 11;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.82)';
+      ctx.beginPath();
+      ctx.ellipse(cx + 28, cy + 5, 26, 7, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx + 18, cy + 1, 15, 7, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx + 38, cy + 2, 17, 6.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(203, 213, 225, 0.35)';
+      ctx.fillRect(cx + 6, cy + 8, 44, 2.5);
+    }
+
+    // Soaring coastal birds on outdoor sunny levels (2 & 4)
+    if (level.id === 2 || level.id === 4) {
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 1;
+      for (let b = 0; b < 4; b++) {
+        const bx = ((b * 127 + time * (16 + b * 4)) % (VIRTUAL_W + 40)) - 20;
+        const by = 24 + b * 9 + Math.sin(time * 5 + b) * 2;
+        const flap = Math.sin(time * 9 + b * 2) * 2.5;
+        ctx.beginPath();
+        ctx.moveTo(bx - 4, by + flap);
+        ctx.quadraticCurveTo(bx - 1, by - 2, bx, by);
+        ctx.quadraticCurveTo(bx + 1, by - 2, bx + 4, by + flap);
+        ctx.stroke();
+      }
+    }
+
+    // Distant sunlit mountain / coastal ridge in atmospheric blue haze
+    const mtnScroll = Math.floor((speedOverride !== undefined ? speedOverride * 0.14 : camX * 0.1));
+    ctx.fillStyle = level.id === 2 ? '#93C5FD' : level.id === 4 ? '#7DD3FC' : '#BAE6FD';
+    ctx.beginPath();
+    ctx.moveTo(0, FLOOR_MIN_Y + 14);
+    for (let x = -40; x <= VIRTUAL_W + 60; x += 48) {
+      const idx = Math.floor((x + mtnScroll) / 48);
+      const sx = idx * 48 - mtnScroll;
+      const peak = 32 + (tileHash(idx, level.id * 13) % 34);
+      ctx.lineTo(sx, FLOOR_MIN_Y - peak);
+    }
+    ctx.lineTo(VIRTUAL_W + 60, FLOOR_MIN_Y + 14);
+    ctx.closePath();
+    ctx.fill();
+
+    // Distant sunlit city silhouette (non-repeating hashed blocks)
+    const farScroll = Math.floor(speedOverride !== undefined ? speedOverride * 0.28 : camX * 0.2);
+    const farW = 50;
+    const startFar = Math.floor(farScroll / farW) - 1;
+    for (let k = 0; k < 12; k++) {
+      const wIdx = startFar + k;
+      const bx = wIdx * farW - farScroll;
+      const h = tileHash(wIdx, level.id * 31);
+      const bh = 38 + (h % 6) * 10;
+      const bw = 34 + (h % 4) * 5;
+      const topY = FLOOR_MIN_Y - bh - 4;
+      const wallCol = h % 3 === 0 ? '#94A3B8' : h % 3 === 1 ? '#CBD5E1' : '#A8B9CC';
+      const sunCol = '#F1F5F9';
+
+      px(ctx, bx, topY, bw, bh + 16, wallCol);
+      px(ctx, bx, topY, 3, bh + 16, sunCol); // Sunlit left edge
+      px(ctx, bx, topY, bw, 2, '#E2E8F0');
+      // Subtle daytime sky-reflecting glass windows
+      for (let wy = topY + 6; wy < FLOOR_MIN_Y - 12; wy += 8) {
+        for (let wxOff = 6; wxOff < bw - 7; wxOff += 9) {
+          if ((h + wy + wxOff) % 4 !== 0) {
+            px(ctx, bx + wxOff, wy, 4.5, 3, '#64748B');
+            px(ctx, bx + wxOff, wy, 4.5, 1, '#BAE6FD');
+          }
+        }
+      }
+      if (h % 5 === 0) {
+        px(ctx, bx + bw / 2 - 1, topY - 14, 2, 14, '#64748B');
+      }
+    }
+    return;
+  }
+
+  // ── DARK NIGHT SKYLINE (Levels 1 & 3) ──
   const moonX = VIRTUAL_W - 88 - ((camX * 0.025) % 40);
   const moonGrad = ctx.createRadialGradient(moonX, 34, 4, moonX, 34, 48);
-  moonGrad.addColorStop(0, level.id === 4 ? 'rgba(255,42,133,0.38)' : 'rgba(57,255,20,0.28)');
-  moonGrad.addColorStop(0.5, 'rgba(0,229,255,0.09)');
+  moonGrad.addColorStop(0, 'rgba(226, 232, 240, 0.34)');
+  moonGrad.addColorStop(0.5, 'rgba(57, 255, 20, 0.10)');
   moonGrad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = moonGrad;
   ctx.beginPath();
   ctx.arc(moonX, 34, 48, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = level.id === 4 ? '#FFD1E8' : '#D9F99D';
+  ctx.fillStyle = '#E2E8F0';
   ctx.beginPath();
-  ctx.arc(moonX, 34, 11, 0, Math.PI * 2);
+  ctx.arc(moonX, 34, 10.5, 0, Math.PI * 2);
   ctx.fill();
 
-  // Drifting cyber-smog cloud ribbons
-  const cloudScroll = Math.floor((speedOverride ?? camX * 0.09) + time * 6);
+  // Drifting night clouds
+  const cloudScroll = Math.floor((speedOverride ?? camX * 0.09) + time * 5);
   for (let i = -1; i < 7; i++) {
     const cx = i * 96 - (cloudScroll % 96);
     px(ctx, cx, 14 + (i % 2) * 10, 74, 8, 'rgba(255,255,255,0.04)');
-    px(ctx, cx + 18, 10 + (i % 2) * 10, 44, 5, level.id === 4 ? 'rgba(255,42,133,0.07)' : 'rgba(57,255,20,0.06)');
+    px(ctx, cx + 18, 10 + (i % 2) * 10, 44, 5, 'rgba(57,255,20,0.05)');
   }
 
-  // Flying cyber-spinner traffic streaks in distant sky
-  for (let s = 0; s < 5; s++) {
-    const dir = s % 2 === 0 ? 1 : -1;
-    const sp = 28 + s * 14;
-    const sx = dir > 0
-      ? ((time * sp + s * 113) % (VIRTUAL_W + 60)) - 30
-      : VIRTUAL_W + 30 - ((time * sp + s * 89) % (VIRTUAL_W + 60));
-    const sy = 22 + s * 11;
-    px(ctx, sx, sy, 8, 1.5, dir > 0 ? '#00E5FF' : '#FF2A85');
-    px(ctx, sx - dir * 7, sy, 7, 1, dir > 0 ? 'rgba(0,229,255,0.35)' : 'rgba(255,42,133,0.35)');
-  }
-
-  // Layer 2: Varied Cyberpunk Arcology Skyline (indexed by world slot, non-repeating silhouettes)
+  // Distant varied night skyline (hashed, non-repeating silhouettes)
   const farScroll = Math.floor(speedOverride !== undefined ? speedOverride * 0.32 : camX * 0.22);
   const farW = 54;
   const startFar = Math.floor(farScroll / farW) - 1;
   for (let k = 0; k < 12; k++) {
     const wIdx = startFar + k;
     const bx = wIdx * farW - farScroll;
-    const hash = Math.abs((wIdx * 73 + level.id * 19) % 17);
-    const bh = 50 + (hash % 7) * 10;
-    const bw = 42 + (hash % 3) * 5;
-    const topY = FLOOR_MIN_Y - bh - 12;
-    const archType = Math.abs(wIdx) % 5;
+    const h = tileHash(wIdx, level.id * 43);
+    const bh = 46 + (h % 7) * 10;
+    const bw = 40 + (h % 3) * 6;
+    const topY = FLOOR_MIN_Y - bh - 6;
+    const archType = h % 5;
 
-    // Tower body
-    ctx.fillStyle = archType === 2 ? '#101526' : '#0B101B';
+    ctx.fillStyle = archType === 2 ? '#101626' : '#0B101B';
     if (archType === 1) {
-      // Brutalist cyberpunk pyramid arcology (Blade Runner style)
       ctx.beginPath();
-      ctx.moveTo(bx - 4, FLOOR_MIN_Y);
+      ctx.moveTo(bx - 4, FLOOR_MIN_Y + 14);
       ctx.lineTo(bx + 10, topY + 6);
       ctx.lineTo(bx + bw - 10, topY + 6);
-      ctx.lineTo(bx + bw + 4, FLOOR_MIN_Y);
+      ctx.lineTo(bx + bw + 4, FLOOR_MIN_Y + 14);
       ctx.closePath();
       ctx.fill();
       px(ctx, bx + 11, topY + 6, bw - 22, 2, '#39FF14');
     } else {
-      px(ctx, bx, topY, bw, bh + 12, archType === 3 ? '#0E1624' : '#0B101B');
+      px(ctx, bx, topY, bw, bh + 20, archType === 3 ? '#0E1624' : '#0B101B');
       px(ctx, bx + 1, topY, bw - 2, 2, archType === 0 ? '#334155' : '#1E293B');
     }
 
-    // Rooftop spires, antennas, dish or holographic megacorp logo
     if (archType === 0) {
-      px(ctx, bx + bw / 2 - 1, topY - 22, 2, 22, '#334155');
+      px(ctx, bx + bw / 2 - 1, topY - 20, 2, 20, '#334155');
       if (Math.floor(time * 2.5 + wIdx) % 2 === 0) {
-        px(ctx, bx + bw / 2 - 2, topY - 24, 4, 3, '#FF2A85');
+        px(ctx, bx + bw / 2 - 2, topY - 22, 4, 3, '#FF2A85');
       }
     } else if (archType === 2) {
-      // Glowing vertical neon strip along skyscraper edge
-      const stripCol = wIdx % 2 === 0 ? '#00E5FF' : '#FF2A85';
-      px(ctx, bx + 4, topY + 8, 2, bh - 16, stripCol);
-      px(ctx, bx + bw - 6, topY + 14, 2, bh - 24, 'rgba(57,255,20,0.45)');
-    } else if (archType === 4) {
-      // Giant floating sky-hologram sign above tower
-      const pulse = 0.55 + Math.sin(time * 4 + wIdx) * 0.25;
-      ctx.fillStyle = `rgba(57, 255, 20, ${0.14 * pulse})`;
-      ctx.fillRect(bx + 4, topY - 18, 34, 14);
-      ctx.strokeStyle = `rgba(57, 255, 20, ${0.55 * pulse})`;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(bx + 4, topY - 18, 34, 14);
-      ctx.fillStyle = `rgba(187, 247, 208, ${0.8 * pulse})`;
-      ctx.font = 'bold 5px monospace';
-      ctx.fillText(wIdx % 2 === 0 ? 'PIZED' : 'BEER77', bx + 7, topY - 9);
+      px(ctx, bx + 4, topY + 8, 2, bh - 16, h % 2 === 0 ? '#00E5FF' : '#FF2A85');
     }
 
-    // Lit cyber-tower windows
-    for (let wy = topY + 8; wy < FLOOR_MIN_Y - 22; wy += 8) {
+    for (let wy = topY + 8; wy < FLOOR_MIN_Y - 12; wy += 8) {
       for (let wxOff = 6; wxOff < bw - 10; wxOff += 11) {
-        if ((wIdx + wy + wxOff) % 5 !== 0) {
+        if ((h + wy + wxOff) % 5 !== 0) {
           const wCol =
-            (wIdx + wy) % 7 === 0
-              ? '#FF2A85'
-              : (wIdx + wxOff) % 4 === 0
+            (h + wy) % 7 === 0
+              ? '#FDE047'
+              : (h + wxOff) % 4 === 0
                 ? '#00E5FF'
-                : level.id === 6
-                  ? '#15803D'
-                  : '#1F3A3D';
+                : '#1F3A3D';
           px(ctx, bx + wxOff, wy, 5, 2.5, wCol);
         }
       }
     }
-  }
-
-  // Distant elevated cyberpunk monorail zipping behind the midground
-  if (level.id === 1 || level.id === 2 || level.id === 4) {
-    const trackY = FLOOR_MIN_Y - 36;
-    px(ctx, 0, trackY, VIRTUAL_W, 3, '#172033');
-    px(ctx, 0, trackY + 3, VIRTUAL_W, 1, '#00E5FF');
-    const trainX = ((time * 135) % (VIRTUAL_W + 260)) - 130;
-    px(ctx, trainX, trackY - 7, 74, 7, '#0F172A');
-    px(ctx, trainX + 2, trackY - 5, 70, 2, '#00E5FF');
-    px(ctx, trainX + 70, trackY - 5, 4, 3, '#FF2A85');
   }
 }
 
@@ -3189,130 +3533,153 @@ export function drawLevelBackground(
   }
 
   // =========================================================================
-  // LEVEL 1: CYBERPUNK NEON STREETS, BARS, ARCADE, METRO OVERPASS & QUARANTINE
+  // LEVEL 1 (DARK): NIGHT CITY STREETS, REALISTIC NON-REPEATING BLOCKS & BARS
   // =========================================================================
   if (level.id === 1) {
     drawCyberSkyline(ctx, level, camX, time);
 
-    const tileW = 132;
+    const tileW = 128;
     const startIdx = Math.floor(midScroll / tileW) - 1;
     for (let k = 0; k < 6; k++) {
       const wIdx = startIdx + k;
       const wx = wIdx * tileW - midScroll;
-      const variant = ((wIdx % 6) + 6) % 6;
+      const h = tileHash(wIdx, 11);
+      const variant = h % 9;
       const neonBlink = Math.sin(time * 7 + wIdx * 2.3) > -0.78;
+      // Anchor each city block smoothly to local street hill elevation
+      const blockWorldX = camX + wx + tileW * 0.5;
+      const el = Math.round(getGroundElevation(1, blockWorldX));
+      const base = FLOOR_MIN_Y + el;
+
+      ctx.save();
+      ctx.translate(0, el);
 
       if (variant === 0) {
-        // Archetype 0: Iconic Neon Dive Bar «GREEN BEER» with holographic foam mug
-        px(ctx, wx, 36, 126, FLOOR_MIN_Y - 36, '#151B28');
-        px(ctx, wx + 3, 40, 120, FLOOR_MIN_Y - 42, '#1E2636');
-        for (let by = 48; by < FLOOR_MIN_Y - 6; by += 10) px(ctx, wx + 4, by, 118, 1, '#121824');
-        px(ctx, wx - 2, 33, 130, 5, '#334155');
-        // Rooftop AC + vent pipe
-        box(ctx, wx + 92, 42, 22, 14, '#334155', '#64748B', '#0F172A');
-        px(ctx, wx + 96, 46, 14, 7, '#0F172A');
-        // Big glowing neon sign
-        box(ctx, wx + 10, 44, 74, 22, '#090C11', neonBlink ? '#39FF14' : '#1E293B', '#090C11');
+        // Neighborhood Pub «GREEN BEER» with brick facade, drainpipe & warm doorway
+        px(ctx, wx, 38, 124, FLOOR_MIN_Y - 22, '#171E2C');
+        px(ctx, wx + 3, 42, 118, FLOOR_MIN_Y - 28, '#20293B');
+        for (let by = 50; by < FLOOR_MIN_Y; by += 10) px(ctx, wx + 4, by, 116, 1, '#141B27');
+        px(ctx, wx - 1, 35, 126, 4, '#334155');
+        px(ctx, wx + 118, 38, 3, FLOOR_MIN_Y - 28, '#475569'); // rain gutter pipe
+        box(ctx, wx + 90, 44, 22, 14, '#334155', '#64748B', '#0F172A');
+        box(ctx, wx + 10, 46, 74, 20, '#090C11', neonBlink ? '#39FF14' : '#1E293B', '#090C11');
         if (neonBlink) {
-          ctx.fillStyle = 'rgba(57,255,20,0.16)';
-          ctx.fillRect(wx + 6, 40, 82, 30);
           ctx.fillStyle = '#39FF14';
           ctx.font = 'bold 8px monospace';
-          ctx.fillText('GREEN BEER', wx + 16, 58);
+          ctx.fillText('GREEN BEER', wx + 16, 59);
         }
-        // Hanging holographic beer mug on bracket
-        px(ctx, wx + 90, 74, 28, 2, '#64748B');
-        ctx.fillStyle = 'rgba(57,255,20,0.22)';
-        ctx.fillRect(wx + 94, 78, 18, 22);
-        ctx.strokeStyle = '#39FF14';
-        ctx.lineWidth = 1.2;
-        ctx.strokeRect(wx + 94, 78, 18, 22);
-        px(ctx, wx + 96, 75, 14, 4, '#ECFCCB');
-        // Glowing bar doorway + smashed crates
-        box(ctx, wx + 18, 96, 42, 54, '#0B1018', '#334155', INK);
-        px(ctx, wx + 22, 100, 34, 24, 'rgba(57,255,20,0.2)');
-        px(ctx, wx + 22, 126, 34, 2, '#39FF14');
-        box(ctx, wx + 68, 132, 18, 18, '#5C3A21', '#9A6338', '#29180C');
+        box(ctx, wx + 16, 94, 42, 58, '#0B1018', '#334155', INK);
+        px(ctx, wx + 20, 98, 34, 24, 'rgba(251,191,36,0.22)');
+        box(ctx, wx + 68, 128, 16, 22, '#334155', '#64748B', INK); // metal trash bin
       } else if (variant === 1) {
-        // Archetype 1: Cyberpunk Arcade & Ramen Noodle Kiosk + Glowing Vending Machine
-        px(ctx, wx, 42, 126, FLOOR_MIN_Y - 42, '#1A1626');
-        px(ctx, wx + 4, 46, 118, FLOOR_MIN_Y - 48, '#231D33');
-        // Magenta & cyan striped rain awning
-        box(ctx, wx + 4, 82, 82, 14, '#831843', '#FF2A85', INK);
-        for (let st = 0; st < 76; st += 14) px(ctx, wx + 8 + st, 83, 6, 12, '#0F172A');
-        // Vertical glowing Japanese/Cyrillic arcade sign
-        box(ctx, wx + 92, 46, 26, 62, '#090C11', '#00E5FF', INK);
+        // 24/7 Corner Shop «ПРОДУКТЫ 24» + Awning + Vending Machine
+        px(ctx, wx, 46, 124, FLOOR_MIN_Y - 30, '#1D1A2B');
+        px(ctx, wx + 4, 50, 116, FLOOR_MIN_Y - 36, '#272239');
+        box(ctx, wx + 6, 82, 78, 13, '#9D174D', '#F472B6', INK);
+        for (let st = 0; st < 72; st += 14) px(ctx, wx + 8 + st, 83, 6, 11, '#111827');
+        box(ctx, wx + 10, 56, 72, 18, '#090C11', '#00E5FF', INK);
         ctx.fillStyle = '#00E5FF';
         ctx.font = 'bold 7px monospace';
-        ctx.fillText('КИ', wx + 99, 60);
-        ctx.fillText('БЕ', wx + 99, 72);
-        ctx.fillText('Р', wx + 101, 84);
-        ctx.fillStyle = '#FF2A85';
-        ctx.fillText('77', wx + 99, 98);
-        // Arcade counter window + CRT cabinets glow
-        box(ctx, wx + 10, 98, 68, 42, '#090C11', '#475569', INK);
-        px(ctx, wx + 15, 106, 16, 14, 'rgba(0,229,255,0.45)');
-        px(ctx, wx + 36, 106, 16, 14, 'rgba(255,42,133,0.45)');
-        px(ctx, wx + 56, 106, 16, 14, 'rgba(57,255,20,0.45)');
-        // Glowing street vending machine
-        box(ctx, wx + 88, 114, 28, 36, '#1E293B', '#38BDF8', INK);
-        px(ctx, wx + 92, 118, 20, 16, '#0F172A');
-        for (let r = 0; r < 3; r++) {
-          px(ctx, wx + 94, 120 + r * 4, 16, 2, r === 1 ? '#39FF14' : '#FF2A85');
-        }
-        px(ctx, wx + 95, 138, 14, 6, '#090C11');
+        ctx.fillText('ПРОДУКТЫ 24', wx + 14, 68);
+        box(ctx, wx + 10, 98, 68, 42, '#0B111C', '#475569', INK);
+        px(ctx, wx + 14, 102, 60, 26, 'rgba(254,240,138,0.16)');
+        box(ctx, wx + 88, 112, 26, 38, '#1E293B', '#38BDF8', INK);
+        for (let r = 0; r < 3; r++) px(ctx, wx + 93, 118 + r * 5, 16, 2.5, r === 1 ? '#39FF14' : '#FFB000');
       } else if (variant === 2) {
-        // Archetype 2: Cyber-Metro Concrete Overpass Pillar + ALUPKA ROCK Poster + Steam Vent
-        px(ctx, wx, 26, 132, 20, '#1E293B');
-        px(ctx, wx, 46, 132, 3, '#00E5FF');
-        // Massive concrete bridge support pillars
-        box(ctx, wx + 10, 48, 26, FLOOR_MIN_Y - 48, '#263040', '#475569', '#0F172A');
-        box(ctx, wx + 96, 48, 26, FLOOR_MIN_Y - 48, '#263040', '#475569', '#0F172A');
-        // Chain-link alley fence between pillars
-        px(ctx, wx + 36, 76, 60, FLOOR_MIN_Y - 76, '#0D131D');
-        for (let fx = 40; fx < 94; fx += 8) px(ctx, wx + fx, 78, 1, FLOOR_MIN_Y - 78, 'rgba(148,163,184,0.22)');
-        for (let fy = 82; fy < FLOOR_MIN_Y; fy += 8) px(ctx, wx + 36, fy, 60, 1, 'rgba(148,163,184,0.2)');
-        // Upper Alupka Rock Concert Poster pasted on pillar!
-        box(ctx, wx + 12, 82, 22, 34, '#443931', '#A8A29E', '#1C1917');
-        ctx.fillStyle = '#FEF08A';
-        ctx.font = 'bold 5px monospace';
-        ctx.fillText('ALUPKA', wx + 13, 92);
-        ctx.fillStyle = '#FF2A85';
-        ctx.fillText('ROCK', wx + 15, 100);
-        px(ctx, wx + 15, 104, 16, 8, '#1C1917');
-        // Neon graffiti tag on back wall
-        ctx.fillStyle = '#39FF14';
-        ctx.font = 'bold 9px monospace';
-        ctx.fillText('PIZED!', wx + 44, 114);
-        // Glowing blue streetlamp under overpass
-        px(ctx, wx + 56, 50, 20, 3, '#00E5FF');
-        ctx.fillStyle = 'rgba(0,229,255,0.08)';
+        // Urban Bus Stop Shelter + Street Bench + Parked 90s Sedan + Glowing Streetlamp
+        // Low brick courtyard wall behind bus stop
+        px(ctx, wx, 84, 124, FLOOR_MIN_Y - 68, '#161C26');
+        px(ctx, wx, 82, 124, 3, '#334155');
+        // Glass bus shelter
+        box(ctx, wx + 8, 94, 54, 4, '#334155', '#94A3B8', INK);
+        px(ctx, wx + 12, 98, 2, 52, '#64748B');
+        px(ctx, wx + 56, 98, 2, 52, '#64748B');
+        px(ctx, wx + 14, 100, 42, 34, 'rgba(148,163,184,0.12)');
+        box(ctx, wx + 18, 104, 16, 22, '#090C11', '#FACC15', INK); // transit map poster
+        box(ctx, wx + 22, 136, 30, 5, '#78350F', '#D97706', INK); // wooden bench
+        // Parked dark 90s hatchback silhouette at curb
+        drawRoundedPoly(ctx, [[wx + 68, 148], [wx + 72, 134], [wx + 86, 124], [wx + 108, 124], [wx + 118, 134], [wx + 120, 148]], '#1E293B', INK, 1.1);
+        px(ctx, wx + 86, 127, 18, 7, '#0F172A');
+        drawInkEllipse(ctx, wx + 80, 148, 5, 5, 0, '#090C11', '#475569', INK, 0.9);
+        drawInkEllipse(ctx, wx + 110, 148, 5, 5, 0, '#090C11', '#475569', INK, 0.9);
+        px(ctx, wx + 118, 137, 3, 4, '#EF4444'); // taillight
+        // Tall warm sodium streetlight
+        px(ctx, wx + 62, 42, 3, 108, '#475569');
+        px(ctx, wx + 56, 42, 12, 4, '#94A3B8');
+        px(ctx, wx + 57, 46, 8, 2, '#FEF08A');
+        ctx.fillStyle = 'rgba(254, 240, 138, 0.08)';
         ctx.beginPath();
-        ctx.moveTo(wx + 56, 53);
-        ctx.lineTo(wx + 36, FLOOR_MIN_Y);
-        ctx.lineTo(wx + 96, FLOOR_MIN_Y);
-        ctx.lineTo(wx + 76, 53);
+        ctx.moveTo(wx + 56, 48);
+        ctx.lineTo(wx + 32, FLOOR_MIN_Y + 8);
+        ctx.lineTo(wx + 92, FLOOR_MIN_Y + 8);
+        ctx.lineTo(wx + 66, 48);
         ctx.closePath();
         ctx.fill();
       } else if (variant === 3) {
-        // Archetype 3: Quarantine Hologram Billboard + Burning Oil Drum + Police Barricade
-        px(ctx, wx, 54, 126, FLOOR_MIN_Y - 54, '#141923');
-        // Huge roof-mounted holographic warning billboard
-        box(ctx, wx + 8, 22, 110, 42, '#090C11', '#FF2A85', INK);
-        const scanY = 25 + ((Math.floor(time * 28) + wIdx * 7) % 34);
-        px(ctx, wx + 11, scanY, 104, 2, 'rgba(57,255,20,0.35)');
+        // Multi-Story Apartment Block with Balconies, AC Units & Iron Fire Escape
+        px(ctx, wx, 22, 124, FLOOR_MIN_Y - 6, '#1B2230');
+        px(ctx, wx + 4, 26, 116, FLOOR_MIN_Y - 12, '#242D40');
+        for (let wy = 36; wy < 124; wy += 24) {
+          for (let wx2 = 12; wx2 < 102; wx2 += 34) {
+            const lit = (h + wy + wx2) % 3 !== 0;
+            box(ctx, wx + wx2, wy, 20, 15, lit ? '#2A3A40' : '#0D121B', '#475569', INK);
+            if (lit) px(ctx, wx + wx2 + 3, wy + 3, 14, 9, (wy + wx2) % 2 === 0 ? 'rgba(251,191,36,0.34)' : 'rgba(56,189,248,0.28)');
+          }
+        }
+        // Concrete balcony railings + AC box
+        box(ctx, wx + 10, 74, 48, 8, '#334155', '#64748B', INK);
+        box(ctx, wx + 66, 62, 14, 10, '#475569', '#94A3B8', INK);
+        px(ctx, wx + 69, 65, 5, 5, '#0F172A');
+        // Steel stairwell diagonal
+        ctx.strokeStyle = '#64748B';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(wx + 16, 82);
+        ctx.lineTo(wx + 50, 116);
+        ctx.lineTo(wx + 24, 148);
+        ctx.stroke();
+      } else if (variant === 4) {
+        // Concrete Metro Overpass Bridge + Alupka Rock Poster + Chain-Link Fence
+        px(ctx, wx, 26, 128, 18, '#1E293B');
+        px(ctx, wx, 44, 128, 3, '#00E5FF');
+        box(ctx, wx + 8, 46, 24, FLOOR_MIN_Y - 30, '#263040', '#475569', '#0F172A');
+        box(ctx, wx + 94, 46, 24, FLOOR_MIN_Y - 30, '#263040', '#475569', '#0F172A');
+        px(ctx, wx + 32, 78, 62, FLOOR_MIN_Y - 62, '#0D131D');
+        for (let fx = 36; fx < 92; fx += 8) px(ctx, wx + fx, 80, 1, FLOOR_MIN_Y - 64, 'rgba(148,163,184,0.22)');
+        box(ctx, wx + 10, 82, 20, 30, '#443931', '#A8A29E', '#1C1917');
+        ctx.fillStyle = '#FEF08A';
+        ctx.font = 'bold 5px monospace';
+        ctx.fillText('ALUPKA', wx + 11, 93);
+        ctx.fillStyle = '#FF2A85';
+        ctx.fillText('ROCK', wx + 13, 101);
+      } else if (variant === 5) {
+        // Late-Night Shawarma & Coffee Kiosk + Tree Planter
+        px(ctx, wx, 72, 124, FLOOR_MIN_Y - 56, '#131924');
+        box(ctx, wx + 8, 76, 76, 74, '#27222D', '#475569', INK);
+        box(ctx, wx + 12, 82, 68, 16, '#090C11', '#FFB000', INK);
+        ctx.fillStyle = '#FFB000';
+        ctx.font = 'bold 7px monospace';
+        ctx.fillText('ШАУРМА · КОФЕ', wx + 16, 93);
+        box(ctx, wx + 16, 102, 58, 26, '#0F172A', '#64748B', INK);
+        px(ctx, wx + 20, 106, 50, 18, 'rgba(251,146,60,0.3)');
+        // Urban deciduous tree in concrete planter
+        box(ctx, wx + 94, 134, 24, 16, '#334155', '#64748B', INK);
+        px(ctx, wx + 104, 102, 4, 34, '#451A03');
+        drawInkEllipse(ctx, wx + 106, 92, 16, 14, 0, '#14532D', '#22C55E', '#052E16', 1.0);
+      } else if (variant === 6) {
+        // Quarantine Warning Billboard + Burning Oil Drum + Police Barricade
+        px(ctx, wx, 58, 124, FLOOR_MIN_Y - 42, '#141923');
+        box(ctx, wx + 8, 24, 108, 40, '#090C11', '#FF2A85', INK);
         ctx.fillStyle = '#FF2A85';
         ctx.font = 'bold 8px monospace';
-        ctx.fillText('VIRUS PIZED-77', wx + 22, 39);
+        ctx.fillText('VIRUS PIZED-77', wx + 22, 40);
         ctx.fillStyle = '#39FF14';
         ctx.font = 'bold 7px monospace';
-        ctx.fillText('QUARANTINE ZONE', wx + 22, 53);
-        // Yellow/black police barricade & burning barrel
-        for (let bx = 12; bx < 78; bx += 12) {
+        ctx.fillText('QUARANTINE ZONE', wx + 22, 54);
+        for (let bx = 12; bx < 76; bx += 12) {
           px(ctx, wx + bx, 134, 6, 14, '#FACC15');
           px(ctx, wx + bx + 6, 134, 6, 14, '#090C11');
         }
-        // Burning metal trash barrel with flickering flame
         box(ctx, wx + 90, 126, 20, 24, '#334155', '#64748B', INK);
         const fl = Math.sin(time * 16 + wIdx) * 3;
         ctx.fillStyle = '#F97316';
@@ -3321,94 +3688,67 @@ export function drawLevelBackground(
         ctx.lineTo(wx + 100, 108 + fl);
         ctx.lineTo(wx + 107, 126);
         ctx.fill();
-        ctx.fillStyle = '#FEF08A';
-        ctx.beginPath();
-        ctx.moveTo(wx + 96, 126);
-        ctx.lineTo(wx + 100, 115 + fl * 0.6);
-        ctx.lineTo(wx + 104, 126);
-        ctx.fill();
-      } else if (variant === 4) {
-        // Archetype 4: Multi-Story Cyber-Slum with Fire Escapes, Satellite Dishes & Hanging Cables
-        px(ctx, wx, 24, 126, FLOOR_MIN_Y - 24, '#181E2B');
-        px(ctx, wx + 4, 28, 118, FLOOR_MIN_Y - 30, '#212A3B');
-        // Apartment windows with warm/neon glow
-        for (let wy = 38; wy < 126; wy += 24) {
-          for (let wx2 = 12; wx2 < 104; wx2 += 32) {
-            const lit = (wIdx + wy + wx2) % 3 !== 0;
-            box(ctx, wx + wx2, wy, 20, 14, lit ? '#1E3A3F' : '#0B0F17', '#475569', INK);
-            if (lit) px(ctx, wx + wx2 + 3, wy + 3, 14, 8, (wy + wx2) % 2 === 0 ? 'rgba(0,229,255,0.35)' : 'rgba(255,176,0,0.3)');
-          }
-        }
-        // Zig-zag iron fire escape
-        px(ctx, wx + 8, 60, 56, 3, '#0F172A');
-        px(ctx, wx + 8, 96, 56, 3, '#0F172A');
-        ctx.strokeStyle = '#64748B';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(wx + 18, 60);
-        ctx.lineTo(wx + 52, 96);
-        ctx.lineTo(wx + 24, 138);
-        ctx.stroke();
-        // Overhead tangled power wires
-        ctx.strokeStyle = '#090C11';
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(wx, 34);
-        ctx.quadraticCurveTo(wx + 66, 54, wx + 132, 34);
-        ctx.stroke();
+      } else if (variant === 7) {
+        // Brick Pharmacy «АПТЕКА» with Glowing Green Cross & Arched Windows
+        px(ctx, wx, 34, 124, FLOOR_MIN_Y - 18, '#281E24');
+        px(ctx, wx + 3, 38, 118, FLOOR_MIN_Y - 24, '#36272E');
+        box(ctx, wx + 14, 52, 62, 18, '#090C11', '#22C55E', INK);
+        ctx.fillStyle = '#4ADE80';
+        ctx.font = 'bold 8px monospace';
+        ctx.fillText('АПТЕКА 24', wx + 22, 64);
+        // Glowing pharmacy green cross sign
+        px(ctx, wx + 90, 56, 16, 5, '#22C55E');
+        px(ctx, wx + 95.5, 50.5, 5, 16, '#22C55E');
+        box(ctx, wx + 16, 86, 40, 46, '#0F172A', '#64748B', INK);
+        px(ctx, wx + 20, 90, 32, 34, 'rgba(134,239,172,0.16)');
+        box(ctx, wx + 68, 92, 38, 58, '#1E293B', '#475569', INK);
       } else {
-        // Archetype 5: Club «BAR PIZED» with Strobe Spotlights & Neon Doorway
-        px(ctx, wx, 34, 126, FLOOR_MIN_Y - 34, '#161124');
-        box(ctx, wx + 12, 42, 102, 24, '#090C11', '#FF2A85', INK);
+        // Night Club «CLUB PIZED-77» with Equalizer Window & Neon Doorway
+        px(ctx, wx, 36, 124, FLOOR_MIN_Y - 20, '#161124');
+        box(ctx, wx + 12, 44, 100, 22, '#090C11', '#FF2A85', INK);
         ctx.fillStyle = neonBlink ? '#FF2A85' : '#831843';
         ctx.font = 'bold 9px monospace';
         ctx.fillText('CLUB PIZED-77', wx + 20, 58);
-        // Pulsing equalizer bars in club window
-        box(ctx, wx + 14, 74, 46, 36, '#090C11', '#334155', INK);
+        box(ctx, wx + 14, 76, 46, 36, '#090C11', '#334155', INK);
         for (let b = 0; b < 6; b++) {
           const bh = 6 + Math.abs(Math.sin(time * 9 + b * 1.1)) * 22;
-          px(ctx, wx + 18 + b * 7, 106 - bh, 5, bh, b % 2 === 0 ? '#39FF14' : '#00E5FF');
+          px(ctx, wx + 18 + b * 7, 108 - bh, 5, bh, b % 2 === 0 ? '#39FF14' : '#00E5FF');
         }
-        // Heavy velvet-rope doorway
         box(ctx, wx + 72, 86, 40, 64, '#0B0F17', '#FF2A85', INK);
         px(ctx, wx + 76, 92, 32, 26, 'rgba(255,42,133,0.22)');
       }
+
+      ctx.restore();
+      void base;
     }
 
-    // Wet neon-lit asphalt street, glowing crosswalks, steam manholes & puddles
-    px(ctx, 0, FLOOR_MIN_Y, VIRTUAL_W, VIRTUAL_H - FLOOR_MIN_Y, '#101520');
-    px(ctx, 0, FLOOR_MIN_Y, VIRTUAL_W, 6, '#2A364B');
-    px(ctx, 0, FLOOR_MIN_Y + 6, VIRTUAL_W, 2, '#070A0F');
+    // Smooth Sloped Wet Dark Asphalt + Sloped Curb!
+    drawSlopedGroundSurface(ctx, 1, camX, '#111622', '#2D3A4F', '#070A0F');
+
     const roadTile = 92;
     const roadStart = Math.floor(camX / roadTile) - 1;
     for (let k = 0; k < 8; k++) {
       const rIdx = roadStart + k;
       const rx = rIdx * roadTile - camX;
-      // Road lane dashes
-      px(ctx, rx + 8, 206, 34, 3, '#334155');
-      // Storm grate + rising manhole steam on every 3rd tile
-      px(ctx, rx + 12, FLOOR_MIN_Y + 8, 18, 6, '#070A0F');
-      px(ctx, rx + 14, FLOOR_MIN_Y + 9, 14, 1, '#475569');
-      if (Math.abs(rIdx) % 3 === 1) {
-        const st = (time * 24 + rIdx * 11) % 26;
-        ctx.fillStyle = `rgba(203, 213, 225, ${0.22 * (1 - st / 26)})`;
+      const rEl = getGroundElevation(1, rIdx * roadTile + 24);
+      px(ctx, rx + 8, 206 + rEl, 34, 3, '#334155');
+      px(ctx, rx + 12, FLOOR_MIN_Y + 8 + rEl, 18, 5, '#070A0F');
+      if (tileHash(rIdx, 91) % 3 === 0) {
+        const st = (time * 24 + rIdx * 11) % 24;
+        ctx.fillStyle = `rgba(203, 213, 225, ${0.22 * (1 - st / 24)})`;
         ctx.beginPath();
-        ctx.arc(rx + 21 + Math.sin(time * 3 + rIdx) * 3, FLOOR_MIN_Y + 8 - st, 4 + st * 0.28, 0, Math.PI * 2);
+        ctx.arc(rx + 21 + Math.sin(time * 3 + rIdx) * 3, FLOOR_MIN_Y + 8 + rEl - st, 4 + st * 0.25, 0, Math.PI * 2);
         ctx.fill();
       }
-      // Crosswalk bars every 5th tile
-      if (Math.abs(rIdx) % 5 === 2) {
+      if (tileHash(rIdx, 93) % 5 === 0) {
         for (let cy = FLOOR_MIN_Y + 14; cy < VIRTUAL_H - 12; cy += 14) {
-          px(ctx, rx + 42, cy, 24, 6, 'rgba(226, 232, 240, 0.14)');
+          px(ctx, rx + 42, cy + rEl, 24, 6, 'rgba(226, 232, 240, 0.14)');
         }
       }
-      // Colorful cyber puddle reflections
-      px(ctx, rx + 24, 174, 28, 5, rIdx % 2 === 0 ? 'rgba(57, 255, 20, 0.17)' : 'rgba(0, 229, 255, 0.17)');
-      px(ctx, rx + 54, 234, 24, 4, 'rgba(255, 42, 133, 0.18)');
-      px(ctx, rx + 68, FLOOR_MIN_Y + 12, 5, 2, '#39FF14');
+      px(ctx, rx + 24, 174 + rEl, 26, 4, rIdx % 2 === 0 ? 'rgba(57, 255, 20, 0.16)' : 'rgba(0, 229, 255, 0.16)');
     }
 
-    // Diagonal cyberpunk pixel rain streaks
+    // Diagonal night rain streaks
     ctx.strokeStyle = 'rgba(148, 163, 184, 0.16)';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -3421,158 +3761,213 @@ export function drawLevelBackground(
     ctx.stroke();
 
   // =========================================================================
-  // LEVEL 2: CYBER NIGHT MARKET, BAZAAR ARCHES, SHIPPING CONTAINERS & KEG DEPOT
+  // LEVEL 2 (LIGHT): SUNNY DAYTIME SOUTHERN MARKET, PROMENADE & WATERFRONT!
   // =========================================================================
   } else if (level.id === 2) {
     drawCyberSkyline(ctx, level, camX, time);
+
+    // Sparkling sunlit southern sea bay behind the market promenade!
+    const seaGrad = ctx.createLinearGradient(0, FLOOR_MIN_Y - 38, 0, FLOOR_MIN_Y + 12);
+    seaGrad.addColorStop(0, '#0284C7');
+    seaGrad.addColorStop(0.55, '#38BDF8');
+    seaGrad.addColorStop(1, '#7DD3FC');
+    ctx.fillStyle = seaGrad;
+    ctx.fillRect(0, FLOOR_MIN_Y - 36, VIRTUAL_W, 48);
+    // Animated sunlight glints on waves
+    for (let w = 0; w < 18; w++) {
+      const wx = ((w * 37 - Math.floor(camX * 0.25 + time * 14)) % VIRTUAL_W + VIRTUAL_W) % VIRTUAL_W;
+      px(ctx, wx, FLOOR_MIN_Y - 30 + (w % 4) * 6, 14, 1.5, 'rgba(255, 255, 255, 0.65)');
+    }
 
     const tileW = 128;
     const startIdx = Math.floor(midScroll / tileW) - 1;
     for (let k = 0; k < 6; k++) {
       const wIdx = startIdx + k;
       const sx = wIdx * tileW - midScroll;
-      const variant = ((wIdx % 6) + 6) % 6;
+      const h = tileHash(wIdx, 22);
+      const variant = h % 9;
+      const el = Math.round(getGroundElevation(2, camX + sx + tileW * 0.5));
+
+      ctx.save();
+      ctx.translate(0, el);
 
       if (variant === 0) {
-        // Double-decker Green Beer Stall with lanterns & stacked crates
-        box(ctx, sx + 4, 58, 114, 16, '#9D174D', '#F472B6', INK);
-        for (let st = 0; st < 110; st += 16) px(ctx, sx + 6 + st, 59, 8, 14, '#111827');
-        px(ctx, sx + 8, 74, 5, 78, '#475569');
-        px(ctx, sx + 109, 74, 5, 78, '#475569');
-        box(ctx, sx + 12, 118, 98, 32, '#292524', '#57534E', INK);
-        box(ctx, sx + 18, 102, 22, 16, '#15803D', '#4ADE80', '#052E16');
-        box(ctx, sx + 44, 102, 22, 16, '#15803D', '#4ADE80', '#052E16');
-        box(ctx, sx + 30, 86, 22, 16, '#22C55E', '#BBF7D0', '#14532D');
-        box(ctx, sx + 74, 104, 24, 14, '#A84A28', '#F97316', '#431407');
-        // Swaying cyber lanterns
-        const sw = Math.sin(time * 4 + wIdx) * 2;
-        px(ctx, sx + 22 + sw, 76, 5, 7, '#FFB000');
-        px(ctx, sx + 60 - sw, 76, 5, 7, '#39FF14');
-        px(ctx, sx + 96 + sw, 76, 5, 7, '#FF2A85');
+        // Sunlit Striped Market Stall with Wooden Fruit/Beer Crates & Awning Shadow
+        box(ctx, sx + 6, 62, 112, 15, '#DC2626', '#FCA5A5', '#7F1D1D');
+        for (let st = 0; st < 106; st += 16) px(ctx, sx + 8 + st, 63, 8, 13, '#FFFBEB');
+        px(ctx, sx + 10, 77, 4, 75, '#78350F');
+        px(ctx, sx + 110, 77, 4, 75, '#78350F');
+        px(ctx, sx + 14, 78, 96, 8, 'rgba(15,23,42,0.18)'); // crisp daytime awning shadow
+        box(ctx, sx + 14, 116, 96, 36, '#D6C7B2', '#F5EFE6', '#78716C');
+        box(ctx, sx + 20, 100, 22, 16, '#15803D', '#4ADE80', '#052E16');
+        box(ctx, sx + 46, 100, 22, 16, '#EA580C', '#FDBA74', '#7C2D12');
+        box(ctx, sx + 74, 102, 26, 14, '#B45309', '#FDE047', '#451A03');
       } else if (variant === 1) {
-        // Giant Cyber-Bazaar Neon Archway + Hanging LED Ticker
-        box(ctx, sx + 8, 30, 16, FLOOR_MIN_Y - 30, '#1E293B', '#475569', INK);
-        box(ctx, sx + 104, 30, 16, FLOOR_MIN_Y - 30, '#1E293B', '#475569', INK);
-        box(ctx, sx + 4, 24, 120, 26, '#0F172A', '#FF2A85', INK);
-        px(ctx, sx + 8, 28, 112, 18, '#090C11');
-        ctx.fillStyle = '#39FF14';
+        // Sunlit Whitewashed Southern Market Archway with Terracotta Roof & Cypress Tree
+        box(ctx, sx + 8, 36, 16, FLOOR_MIN_Y - 22, '#F5F0E6', '#FFFFFF', '#A8A29E');
+        box(ctx, sx + 100, 36, 16, FLOOR_MIN_Y - 22, '#F5F0E6', '#FFFFFF', '#A8A29E');
+        box(ctx, sx + 4, 28, 116, 22, '#F5F0E6', '#FFFFFF', '#A8A29E');
+        // Terracotta tiled roof eaves
+        box(ctx, sx + 2, 22, 120, 8, '#C2410C', '#FB923C', '#7C2D12');
+        ctx.fillStyle = '#0F172A';
         ctx.font = 'bold 8px monospace';
-        ctx.fillText('РЫНОК PIZED-77', sx + 20, 40);
-        // Holographic fish / bull market sign hanging under arch
-        ctx.strokeStyle = '#00E5FF';
-        ctx.lineWidth = 1.4;
-        ctx.strokeRect(sx + 38, 56, 52, 22);
-        ctx.fillStyle = 'rgba(0,229,255,0.18)';
-        ctx.fillRect(sx + 38, 56, 52, 22);
-        ctx.fillStyle = '#00E5FF';
-        ctx.font = 'bold 7px monospace';
-        ctx.fillText('FRESH KEG', sx + 44, 70);
+        ctx.fillText('ЮЖНЫЙ РЫНОК', sx + 24, 42);
+        // Sunlit green cypress tree peeking behind arch
+        drawRoundedPoly(ctx, [[sx + 58, 126], [sx + 65, 62], [sx + 72, 126]], '#15803D', INK, 1.0);
+        px(ctx, sx + 64, 126, 3, 24, '#78350F');
       } else if (variant === 2) {
-        // Black-Market Stacked Shipping Containers («PIZED CARGO» / «ALUPKA»)
-        box(ctx, sx + 4, 86, 118, 64, '#164E63', '#00E5FF', INK);
-        for (let rib = 12; rib < 114; rib += 10) px(ctx, sx + rib, 90, 2, 56, '#0E3747');
-        box(ctx, sx + 16, 36, 98, 50, '#581C87', '#E879F9', INK);
-        for (let rib = 24; rib < 108; rib += 10) px(ctx, sx + rib, 40, 2, 42, '#3B0764');
-        ctx.fillStyle = '#FDE047';
-        ctx.font = 'bold 7px monospace';
-        ctx.fillText('PIZED CARGO', sx + 30, 64);
-        ctx.fillStyle = '#39FF14';
-        ctx.fillText('77-SECTOR', sx + 32, 122);
+        // Open Waterfront Stone Balustrade Overlooking Sunny Sea + Palm Tree & Wooden Bench!
+        // Stone parapet railing
+        box(ctx, sx, 118, 128, 34, '#E7E5E4', '#FFFFFF', '#A8A29E');
+        for (let b = 8; b < 120; b += 14) {
+          px(ctx, sx + b, 124, 6, 18, '#7DD3FC'); // sea visible through stone balusters!
+        }
+        // Wooden promenade bench
+        box(ctx, sx + 16, 134, 42, 6, '#B45309', '#FBBF24', '#451A03');
+        px(ctx, sx + 20, 140, 3, 12, '#334155');
+        px(ctx, sx + 51, 140, 3, 12, '#334155');
+        // Tall sunlit southern palm tree!
+        ctx.strokeStyle = '#92400E';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(sx + 96, 150);
+        ctx.quadraticCurveTo(sx + 92, 108, sx + 100, 68);
+        ctx.stroke();
+        for (const ang of [-2.4, -1.7, -0.9, -0.2, 0.5]) {
+          ctx.strokeStyle = '#15803D';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(sx + 100, 68);
+          ctx.quadraticCurveTo(
+            sx + 100 + Math.cos(ang) * 18,
+            68 + Math.sin(ang) * 14 - 4,
+            sx + 100 + Math.cos(ang) * 30,
+            68 + Math.sin(ang) * 20 + 8
+          );
+          ctx.stroke();
+        }
       } else if (variant === 3) {
-        // Cyber Butcher & Taproom Booth with Neon Hooks & Kegs
-        px(ctx, sx + 4, 46, 118, FLOOR_MIN_Y - 46, '#231622');
-        box(ctx, sx + 10, 52, 106, 18, '#090C11', '#FFB000', INK);
-        ctx.fillStyle = '#FFB000';
-        ctx.font = 'bold 8px monospace';
-        ctx.fillText('БУЙВОЛ-ГРИЛЬ', sx + 22, 64);
-        // Hanging neon meat/keg rack inside glowing window
-        box(ctx, sx + 14, 76, 98, 44, '#120A12', '#FF2A85', INK);
-        px(ctx, sx + 18, 82, 90, 2, '#94A3B8');
-        for (let h = 0; h < 4; h++) {
-          px(ctx, sx + 28 + h * 22, 84, 2, 8, '#CBD5E1');
-          box(ctx, sx + 23 + h * 22, 92, 12, 16, h % 2 === 0 ? '#991B1B' : '#15803D', '#FCA5A5', INK);
-        }
-        box(ctx, sx + 10, 124, 106, 26, '#33232D', '#64748B', INK);
+        // Sunlit Harbor Shipping Containers (Teal & Golden Ochre)
+        box(ctx, sx + 4, 86, 118, 66, '#0E7490', '#67E8F9', '#164E63');
+        for (let rib = 12; rib < 114; rib += 10) px(ctx, sx + rib, 90, 2, 58, '#155E75');
+        box(ctx, sx + 16, 38, 96, 48, '#D97706', '#FDE047', '#92400E');
+        for (let rib = 24; rib < 106; rib += 10) px(ctx, sx + rib, 42, 2, 40, '#B45309');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 7px monospace';
+        ctx.fillText('ALUPKA CARGO', sx + 28, 64);
+        ctx.fillStyle = '#ECFCCB';
+        ctx.fillText('PORT-77', sx + 38, 122);
       } else if (variant === 4) {
-        // Hoist Crane & Dripping Toxic Keg Vat Tower
-        px(ctx, sx + 10, 26, 6, FLOOR_MIN_Y - 26, '#475569');
-        px(ctx, sx + 10, 26, 96, 6, '#FACC15');
-        for (let s = 14; s < 100; s += 12) px(ctx, sx + s, 26, 6, 6, '#090C11');
-        // Swinging suspended green-beer keg on steel chain
-        const kegBob = Math.sin(time * 2.5 + wIdx) * 4;
-        px(ctx, sx + 68, 32, 2, 34 + kegBob, '#94A3B8');
-        box(ctx, sx + 54, 66 + kegBob, 30, 36, '#14532D', '#39FF14', INK);
-        px(ctx, sx + 58, 78 + kegBob, 22, 8, '#39FF14');
-        // Dripping green drops
-        const dripY = 104 + ((time * 48 + wIdx * 19) % 44);
-        px(ctx, sx + 68, dripY, 3, 5, '#39FF14');
-        // Stacked wooden pallet base
-        box(ctx, sx + 28, 134, 80, 16, '#5C3A21', '#9A6338', INK);
-      } else {
-        // Black-Market Loading Bay Warehouse with Open Rolling Shutter
-        px(ctx, sx + 2, 38, 122, FLOOR_MIN_Y - 38, '#1B1A26');
-        box(ctx, sx + 14, 54, 98, 96, '#090C11', '#475569', INK);
-        // Half-raised corrugated shutter
-        for (let ry = 56; ry < 92; ry += 6) px(ctx, sx + 16, ry, 94, 4, '#334155');
-        // Glowing green warehouse interior + warning beacon
-        px(ctx, sx + 18, 94, 90, 54, 'rgba(57,255,20,0.12)');
-        box(ctx, sx + 26, 120, 26, 26, '#15803D', '#4ADE80', INK);
-        box(ctx, sx + 58, 124, 22, 22, '#9A3412', '#FB923C', INK);
-        if (Math.floor(time * 4 + wIdx) % 2 === 0) {
-          px(ctx, sx + 58, 42, 12, 8, '#FF2A85');
+        // Sunny Outdoor Street Cafe with Striped Umbrellas & Bistro Tables
+        px(ctx, sx + 4, 52, 118, FLOOR_MIN_Y - 36, '#FEF3C7');
+        px(ctx, sx + 4, 48, 118, 5, '#D97706');
+        box(ctx, sx + 14, 58, 96, 16, '#1E293B', '#FACC15', INK);
+        ctx.fillStyle = '#FEF08A';
+        ctx.font = 'bold 8px monospace';
+        ctx.fillText('БУЙВОЛ-ГРИЛЬ', sx + 24, 69);
+        // Sunlit windows
+        box(ctx, sx + 14, 82, 42, 34, '#BAE6FD', '#FFFFFF', '#64748B');
+        box(ctx, sx + 66, 82, 42, 34, '#BAE6FD', '#FFFFFF', '#64748B');
+        // Cafe sun umbrella & table
+        drawRoundedPoly(ctx, [[sx + 20, 122], [sx + 44, 108], [sx + 68, 122]], '#0284C7', INK, 1.0);
+        px(ctx, sx + 43, 122, 2, 28, '#475569');
+        box(ctx, sx + 32, 134, 24, 4, '#FFFFFF', '#F8FAFC', '#94A3B8');
+      } else if (variant === 5) {
+        // Sunlit Terracotta Coastal Apartment House with Balconies & Hanging Laundry
+        px(ctx, sx + 2, 28, 122, FLOOR_MIN_Y - 12, '#FDE68A');
+        px(ctx, sx + 0, 22, 126, 7, '#B45309'); // terracotta cornice
+        for (let wy = 40; wy < 118; wy += 34) {
+          for (let wx2 = 14; wx2 < 96; wx2 += 48) {
+            box(ctx, sx + wx2, wy, 28, 22, '#38BDF8', '#E0F2FE', '#0369A1');
+            // Wooden green shutters
+            box(ctx, sx + wx2 - 6, wy, 6, 22, '#15803D', '#4ADE80', '#052E16');
+            box(ctx, sx + wx2 + 28, wy, 6, 22, '#15803D', '#4ADE80', '#052E16');
+          }
         }
+        // Flower boxes & clothesline
+        box(ctx, sx + 12, 62, 32, 5, '#9A3412', '#FB923C', INK);
+        px(ctx, sx + 16, 59, 6, 3, '#EF4444');
+        px(ctx, sx + 28, 59, 6, 3, '#FACC15');
+      } else if (variant === 6) {
+        // Sunny Harbor Crane & Suspended Green Beer Keg
+        px(ctx, sx + 12, 26, 6, FLOOR_MIN_Y - 10, '#64748B');
+        px(ctx, sx + 12, 26, 94, 6, '#F59E0B');
+        for (let s = 16; s < 100; s += 12) px(ctx, sx + s, 26, 6, 6, '#1E293B');
+        const kegBob = Math.sin(time * 2.5 + wIdx) * 4;
+        px(ctx, sx + 68, 32, 2, 34 + kegBob, '#475569');
+        box(ctx, sx + 54, 66 + kegBob, 30, 36, '#15803D', '#4ADE80', INK);
+        px(ctx, sx + 58, 78 + kegBob, 22, 8, '#39FF14');
+        box(ctx, sx + 28, 134, 80, 18, '#A16207', '#FDE047', '#451A03');
+      } else if (variant === 7) {
+        // Coastal Fish & Craft Beer Kiosk with Blue-White Striped Awning
+        px(ctx, sx + 6, 64, 112, FLOOR_MIN_Y - 48, '#F1F5F9');
+        box(ctx, sx + 6, 64, 112, 14, '#0284C7', '#7DD3FC', '#0C4A6E');
+        for (let st = 0; st < 106; st += 16) px(ctx, sx + 8 + st, 65, 8, 12, '#FFFFFF');
+        box(ctx, sx + 16, 86, 92, 32, '#0F172A', '#38BDF8', INK);
+        px(ctx, sx + 22, 92, 80, 20, '#E0F2FE');
+        box(ctx, sx + 12, 122, 100, 30, '#CBD5E1', '#FFFFFF', '#64748B');
+      } else {
+        // Open Sunlit Market Warehouse Bay with Corrugated Shutter
+        px(ctx, sx + 2, 38, 122, FLOOR_MIN_Y - 22, '#E2E8F0');
+        box(ctx, sx + 14, 54, 98, 98, '#334155', '#94A3B8', INK);
+        for (let ry = 56; ry < 92; ry += 6) px(ctx, sx + 16, ry, 94, 4, '#64748B');
+        px(ctx, sx + 18, 94, 90, 56, '#1E293B');
+        box(ctx, sx + 26, 122, 26, 26, '#16A34A', '#86EFAC', INK);
+        box(ctx, sx + 58, 126, 22, 22, '#EA580C', '#FDBA74', INK);
       }
 
-      // Continuous overhead festive/cyber cable with glowing bulbs
-      ctx.strokeStyle = '#0F172A';
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.moveTo(sx, 28);
-      ctx.quadraticCurveTo(sx + 64, 44, sx + 128, 28);
-      ctx.stroke();
-      px(ctx, sx + 32, 35, 3, 3, '#39FF14');
-      px(ctx, sx + 64, 38, 3, 3, '#FF2A85');
-      px(ctx, sx + 96, 35, 3, 3, '#FFB000');
+      ctx.restore();
     }
 
-    // Wet neon bazaar tile floor with spilled green beer & market drain lines
-    px(ctx, 0, FLOOR_MIN_Y, VIRTUAL_W, VIRTUAL_H - FLOOR_MIN_Y, '#181421');
-    px(ctx, 0, FLOOR_MIN_Y, VIRTUAL_W, 5, '#44403C');
-    const tScroll = Math.floor(camX) % 52;
-    for (let x = -tScroll; x < VIRTUAL_W; x += 52) {
-      px(ctx, x, FLOOR_MIN_Y + 5, 1, VIRTUAL_H - FLOOR_MIN_Y, '#272034');
-      px(ctx, x + 12, 184, 24, 4, 'rgba(57,255,20,0.16)');
-      px(ctx, x + 28, 228, 18, 4, 'rgba(255,42,133,0.14)');
+    // Smooth Sloped Sunlit Sandstone/Concrete Market Street!
+    drawSlopedGroundSurface(ctx, 2, camX, '#CFC7B8', '#E7E2D8', '#9C9486');
+    const tScroll = Math.floor(camX / 56) - 1;
+    for (let k = 0; k < 11; k++) {
+      const idx = tScroll + k;
+      const rx = idx * 56 - camX;
+      const rEl = getGroundElevation(2, idx * 56 + 24);
+      // Warm sunlit paving joints & realistic daytime shadows
+      px(ctx, rx, FLOOR_MIN_Y + 7 + rEl, 1, VIRTUAL_H - FLOOR_MIN_Y, 'rgba(120, 113, 108, 0.35)');
+      px(ctx, rx + 8, 198 + rEl, 38, 1.5, 'rgba(120, 113, 108, 0.25)');
+      if (tileHash(idx, 27) % 4 === 0) {
+        px(ctx, rx + 14, 184 + rEl, 20, 4, 'rgba(34, 197, 94, 0.24)'); // green beer spill
+      }
+      if (tileHash(idx, 29) % 5 === 1) {
+        // Sunlit crosswalk stripes
+        for (let cy = FLOOR_MIN_Y + 14; cy < VIRTUAL_H - 12; cy += 14) {
+          px(ctx, rx + 12, cy + rEl, 26, 6, 'rgba(255, 255, 255, 0.45)');
+        }
+      }
     }
 
   // =========================================================================
-  // LEVEL 3: FACTORY PERIMETER — SEARCHLIGHTS, SUBSTATION, COLLECTOR, WATCHTOWERS
+  // LEVEL 3 (DARK): NIGHT FACTORY PERIMETER — SEARCHLIGHTS & INDUSTRIAL WALLS
   // =========================================================================
   } else if (level.id === 3) {
     drawCyberSkyline(ctx, level, camX, time);
 
-    // Distant colossal glowing brewery cooling towers + rising vapor
+    // Distant colossal brewery cooling towers
     const siloScroll = Math.floor(camX * 0.35);
     for (let s = -1; s < 5; s++) {
       const sx = s * 164 - (siloScroll % 164);
       ctx.fillStyle = '#0D1924';
       ctx.beginPath();
-      ctx.moveTo(sx + 20, FLOOR_MIN_Y - 12);
+      ctx.moveTo(sx + 20, FLOOR_MIN_Y + 8);
       ctx.lineTo(sx + 32, 38);
       ctx.lineTo(sx + 74, 38);
-      ctx.lineTo(sx + 86, FLOOR_MIN_Y - 12);
+      ctx.lineTo(sx + 86, FLOOR_MIN_Y + 8);
       ctx.closePath();
       ctx.fill();
       px(ctx, sx + 32, 42, 42, 3, '#39FF14');
     }
 
-    // Volumetric sweeping cyan security searchlights
+    // Sweeping security searchlights
     for (let i = 0; i < 3; i++) {
       const originX = 76 + i * 168;
       const tipX = originX + Math.sin(time * 1.45 + i * 2.1) * 74;
       ctx.fillStyle = 'rgba(0, 229, 255, 0.11)';
       ctx.beginPath();
-      ctx.moveTo(originX, FLOOR_MIN_Y - 14);
+      ctx.moveTo(originX, FLOOR_MIN_Y);
       ctx.lineTo(tipX - 36, 0);
       ctx.lineTo(tipX + 36, 0);
       ctx.closePath();
@@ -3584,27 +3979,27 @@ export function drawLevelBackground(
     for (let k = 0; k < 6; k++) {
       const wIdx = startIdx + k;
       const fx = wIdx * tileW - midScroll;
-      const variant = ((wIdx % 6) + 6) % 6;
+      const h = tileHash(wIdx, 33);
+      const variant = h % 8;
+      const el = Math.round(getGroundElevation(3, camX + fx + tileW * 0.5));
+
+      ctx.save();
+      ctx.translate(0, el);
 
       if (variant === 0) {
-        // Laser-Wired Fence + Armored Guard Watchtower + Rotating Radar
-        px(ctx, fx, 68, 120, 84, '#131D2A');
-        box(ctx, fx + 72, 26, 42, 124, '#1E293B', '#475569', INK);
+        px(ctx, fx, 68, 120, 98, '#131D2A');
+        box(ctx, fx + 72, 26, 42, 134, '#1E293B', '#475569', INK);
         box(ctx, fx + 68, 22, 50, 24, '#0F172A', '#00E5FF', INK);
         px(ctx, fx + 74, 28, 38, 10, 'rgba(0,229,255,0.4)');
-        // Rotating radar dish
         const dishW = 6 + Math.abs(Math.sin(time * 3 + wIdx)) * 10;
         px(ctx, fx + 93 - dishW / 2, 14, dishW, 5, '#94A3B8');
-        // Pulsing laser fence beams
         for (let ly = 78; ly < 136; ly += 14) {
           px(ctx, fx, ly, 72, 1.5, Math.floor(time * 6 + ly) % 3 === 0 ? '#FF2A85' : 'rgba(255,42,133,0.45)');
         }
       } else if (variant === 1) {
-        // Pressurized PIZED-77 Toxic Pipeline Junction & Steam Valves
-        px(ctx, fx, 64, 124, 88, '#141F2D');
+        px(ctx, fx, 64, 124, 102, '#141F2D');
         box(ctx, fx, 82, 124, 12, '#334155', '#94A3B8', '#0F172A');
         box(ctx, fx, 104, 124, 10, '#14532D', '#39FF14', '#052E16');
-        // Glowing pressure gauge & valve wheel
         ctx.fillStyle = '#0F172A';
         ctx.beginPath();
         ctx.arc(fx + 62, 88, 9, 0, Math.PI * 2);
@@ -3612,23 +4007,19 @@ export function drawLevelBackground(
         ctx.strokeStyle = '#FF2A85';
         ctx.lineWidth = 1.6;
         ctx.stroke();
-        // Animated venting steam
         const puff = (time * 32 + wIdx * 17) % 28;
         ctx.fillStyle = `rgba(203, 213, 225, ${0.28 * (1 - puff / 28)})`;
         ctx.beginPath();
         ctx.arc(fx + 32, 80 - puff, 4 + puff * 0.24, 0, Math.PI * 2);
         ctx.fill();
       } else if (variant === 2) {
-        // High-Voltage Cyber Transformer Substation with Crackling Cyan Arcs
-        px(ctx, fx, 62, 124, 90, '#111926');
-        box(ctx, fx + 12, 74, 34, 68, '#1E293B', '#00E5FF', INK);
-        box(ctx, fx + 74, 74, 34, 68, '#1E293B', '#00E5FF', INK);
-        // Copper/cyan coils
+        px(ctx, fx, 62, 124, 104, '#111926');
+        box(ctx, fx + 12, 74, 34, 72, '#1E293B', '#00E5FF', INK);
+        box(ctx, fx + 74, 74, 34, 72, '#1E293B', '#00E5FF', INK);
         for (let cy = 82; cy < 130; cy += 10) {
           px(ctx, fx + 16, cy, 26, 4, '#38BDF8');
           px(ctx, fx + 78, cy, 26, 4, '#38BDF8');
         }
-        // Live crackling lightning arc between coils
         if (Math.floor(time * 12 + wIdx) % 3 !== 0) {
           ctx.strokeStyle = '#00E5FF';
           ctx.lineWidth = 1.8;
@@ -3640,343 +4031,452 @@ export function drawLevelBackground(
           ctx.stroke();
         }
       } else if (variant === 3) {
-        // Armored Security Checkpoint Booth + Barrier Arm + CCTV Camera
-        px(ctx, fx, 66, 124, 86, '#151E2B');
-        box(ctx, fx + 12, 72, 46, 78, '#1F2937', '#64748B', INK);
+        px(ctx, fx, 66, 124, 100, '#151E2B');
+        box(ctx, fx + 12, 72, 46, 82, '#1F2937', '#64748B', INK);
         px(ctx, fx + 18, 82, 34, 18, 'rgba(0,229,255,0.28)');
-        px(ctx, fx + 22, 108, 26, 4, '#39FF14');
-        // Striped security barrier gate
         px(ctx, fx + 64, 118, 52, 6, '#FF2A85');
         for (let bx = 68; bx < 112; bx += 12) px(ctx, fx + bx, 118, 6, 6, '#F8FAFC');
-        box(ctx, fx + 58, 114, 10, 36, '#334155', '#94A3B8', INK);
-        // Blinking red CCTV camera
+        box(ctx, fx + 58, 114, 10, 40, '#334155', '#94A3B8', INK);
         px(ctx, fx + 92, 68, 14, 6, '#475569');
         if (Math.floor(time * 3 + wIdx) % 2 === 0) px(ctx, fx + 90, 70, 3, 3, '#FF2A85');
       } else if (variant === 4) {
-        // Toxic Drainage Culvert Pouring Glowing PIZED-77 Green Sludge
-        px(ctx, fx, 58, 124, 94, '#131C26');
+        px(ctx, fx, 58, 124, 108, '#131C26');
         ctx.fillStyle = '#070B10';
         ctx.beginPath();
         ctx.arc(fx + 62, 108, 28, Math.PI, 0);
-        ctx.lineTo(fx + 90, 148);
-        ctx.lineTo(fx + 34, 148);
+        ctx.lineTo(fx + 90, 152);
+        ctx.lineTo(fx + 34, 152);
         ctx.closePath();
         ctx.fill();
-        // Flowing toxic green waterfall
         const flowOffset = Math.floor(time * 48) % 12;
-        px(ctx, fx + 48, 104, 28, 46, 'rgba(57,255,20,0.45)');
-        for (let wy = 104 + flowOffset; wy < 146; wy += 12) {
-          px(ctx, fx + 52, wy, 20, 4, '#BBF7D0');
-        }
-        // Overhead biohazard sign
+        px(ctx, fx + 48, 104, 28, 48, 'rgba(57,255,20,0.45)');
+        for (let wy = 104 + flowOffset; wy < 148; wy += 12) px(ctx, fx + 52, wy, 20, 4, '#BBF7D0');
         box(ctx, fx + 34, 62, 56, 16, '#090C11', '#FACC15', INK);
         ctx.fillStyle = '#FACC15';
         ctx.font = 'bold 7px monospace';
         ctx.fillText('BIO-FLOW 77', fx + 39, 73);
-      } else {
-        // Heavy Blast Bulkhead Door «ЗЕЛЁНЫЙ ПОТОК» + Spinning Amber Hazard Lights
-        px(ctx, fx, 48, 124, 104, '#182230');
-        box(ctx, fx + 14, 58, 96, 92, '#243040', '#64748B', INK);
-        px(ctx, fx + 61, 60, 2, 88, '#090C11');
+      } else if (variant === 5) {
+        px(ctx, fx, 48, 124, 118, '#182230');
+        box(ctx, fx + 14, 58, 96, 96, '#243040', '#64748B', INK);
+        px(ctx, fx + 61, 60, 2, 92, '#090C11');
         ctx.fillStyle = '#39FF14';
         ctx.font = 'bold 8px monospace';
         ctx.fillText('СЕКТОР-77', sxCenter(fx + 62, 46), 92);
-        // Spinning amber beacons
         const beacon = Math.floor(time * 6 + wIdx) % 2 === 0;
         px(ctx, fx + 22, 50, 10, 6, beacon ? '#FFB000' : '#451A03');
         px(ctx, fx + 92, 50, 10, 6, !beacon ? '#FFB000' : '#451A03');
+      } else if (variant === 6) {
+        // Brick Industrial Boiler Hall with Lit Yellow Clerestory Windows & Smokestack
+        px(ctx, fx, 42, 124, 124, '#1F1B22');
+        for (let wx2 = 12; wx2 < 104; wx2 += 34) {
+          box(ctx, fx + wx2, 56, 24, 34, '#0F172A', '#64748B', INK);
+          px(ctx, fx + wx2 + 3, 60, 18, 26, 'rgba(251,191,36,0.22)');
+        }
+        box(ctx, fx + 18, 114, 22, 34, '#14532D', '#4ADE80', INK);
+        box(ctx, fx + 44, 120, 20, 28, '#9A3412', '#FB923C', INK);
+      } else {
+        // Tall Floodlight Mast + Concrete Wall + Stacked Drums
+        px(ctx, fx, 78, 124, 88, '#151E2A');
+        px(ctx, fx + 58, 20, 4, 132, '#475569');
+        box(ctx, fx + 46, 16, 28, 8, '#334155', '#E2E8F0', INK);
+        px(ctx, fx + 49, 20, 22, 3, '#FEF08A');
+        ctx.fillStyle = 'rgba(254,240,138,0.08)';
+        ctx.beginPath();
+        ctx.moveTo(fx + 46, 24);
+        ctx.lineTo(fx + 14, 152);
+        ctx.lineTo(fx + 106, 152);
+        ctx.lineTo(fx + 74, 24);
+        ctx.closePath();
+        ctx.fill();
+        box(ctx, fx + 16, 126, 18, 22, '#0E7490', '#38BDF8', INK);
+        box(ctx, fx + 88, 126, 18, 22, '#15803D', '#39FF14', INK);
       }
 
-      // Continuous yellow/black hazard curb strip at wall base
       for (let s = 0; s < 120; s += 12) {
         px(ctx, fx + s, 144, 6, 8, '#FACC15');
         px(ctx, fx + s + 6, 144, 6, 8, '#090C11');
       }
+      ctx.restore();
     }
 
-    // Industrial concrete floor with drainage grates & glowing cable channels
-    px(ctx, 0, FLOOR_MIN_Y, VIRTUAL_W, VIRTUAL_H - FLOOR_MIN_Y, '#121922');
-    const cScroll = Math.floor(camX) % 72;
-    for (let x = -cScroll; x < VIRTUAL_W; x += 72) {
-      px(ctx, x, 198, 38, 3, '#243244');
-      px(ctx, x + 12, 168, 22, 3, 'rgba(0,229,255,0.22)');
-      px(ctx, x + 40, 232, 24, 4, 'rgba(57,255,20,0.16)');
+    drawSlopedGroundSurface(ctx, 3, camX, '#121922', '#2B3A4D', '#070A0F');
+    const cStart = Math.floor(camX / 72) - 1;
+    for (let k = 0; k < 9; k++) {
+      const idx = cStart + k;
+      const rx = idx * 72 - camX;
+      const rEl = getGroundElevation(3, idx * 72 + 24);
+      px(ctx, rx, 198 + rEl, 38, 3, '#243244');
+      px(ctx, rx + 12, 168 + rEl, 22, 3, 'rgba(0,229,255,0.22)');
+      px(ctx, rx + 40, 232 + rEl, 24, 4, 'rgba(57,255,20,0.16)');
     }
 
   // =========================================================================
-  // LEVEL 4: HIGH-SPEED CYBER HIGHWAY — 4 BIOMES (OVERPASS -> TUNNEL -> BRIDGE -> REFINERY)
+  // LEVEL 4 (LIGHT): SUNNY DAYTIME COASTAL HIGHWAY ON HARLEY CRUISERS!
   // =========================================================================
   } else if (level.id === 4) {
-    const speedScroll = Math.floor(time * 520);
+    const speedScroll = Math.floor(time * 380);
     const biome = camX < 2500 ? 0 : camX < 4600 ? 1 : camX < 7300 ? 2 : 3;
 
     if (biome === 1) {
-      // BIOME 1: High-Speed Strobe Cyber-Tunnel
-      px(ctx, 0, 0, VIRTUAL_W, FLOOR_MIN_Y, '#080B16');
-      px(ctx, 0, 0, VIRTUAL_W, 18, '#13192C');
+      // BIOME 1: Brightly Lit Daytime Concrete Highway Tunnel with Warm Overhead Lamps
+      px(ctx, 0, 0, VIRTUAL_W, FLOOR_MIN_Y + 18, '#334155');
+      px(ctx, 0, 0, VIRTUAL_W, 20, '#475569');
+      // Bright ceramic white lower tunnel wall tiles
+      px(ctx, 0, 82, VIRTUAL_W, FLOOR_MIN_Y - 64, '#CBD5E1');
       for (let x = -(speedScroll % 96); x < VIRTUAL_W; x += 96) {
-        px(ctx, x, 10, 22, FLOOR_MIN_Y - 10, '#182038');
-        px(ctx, x + 4, 16, 14, 7, '#00E5FF');
-        px(ctx, x + 4, 24, 14, 2, '#FFFFFF');
-        // Glowing magenta guide strip
-        px(ctx, x + 28, 76, 56, 3, '#FF2A85');
-        px(ctx, x + 28, 86, 56, 2, 'rgba(57,255,20,0.45)');
+        px(ctx, x, 16, 18, FLOOR_MIN_Y + 2, '#64748B');
+        px(ctx, x + 30, 14, 34, 6, '#FEF08A');
+        px(ctx, x + 32, 20, 30, 3, '#FFFFFF');
+        // Warm overhead light wash
+        ctx.fillStyle = 'rgba(254, 249, 195, 0.14)';
+        ctx.fillRect(x + 24, 22, 46, FLOOR_MIN_Y - 12);
+        // Reflective amber safety stripe along tunnel wall
+        px(ctx, x + 22, 118, 64, 4, '#F59E0B');
       }
     } else {
-      drawCyberSkyline(ctx, level, camX, time, speedScroll * 0.14);
+      drawCyberSkyline(ctx, level, camX, time, speedScroll * 0.12);
 
       if (biome === 0) {
-        // BIOME 0: Neon Megacity Overpass with Giant Overhead Hologram Billboards
-        for (let x = -(speedScroll % 180); x < VIRTUAL_W; x += 180) {
-          px(ctx, x, 18, 8, FLOOR_MIN_Y - 18, '#26183D');
-          px(ctx, x, 18, 180, 5, '#FF2A85');
-          px(ctx, x + 12, 24, 156, 2, '#00E5FF');
-          // Suspended neon highway gantry billboard
-          box(ctx, x + 36, 30, 88, 28, '#090C11', '#39FF14', INK);
-          ctx.fillStyle = '#39FF14';
-          ctx.font = 'bold 8px monospace';
-          ctx.fillText('NEXT: ZAVOD', x + 48, 43);
-          ctx.fillStyle = '#FF2A85';
+        // BIOME 0: Sunlit Coastal Highway with Pine/Cypress Hillsides & Realistic Blue Highway Signs
+        const hillStep = 148;
+        const hStart = Math.floor((speedScroll * 0.45) / hillStep) - 1;
+        for (let k = 0; k < 6; k++) {
+          const idx = hStart + k;
+          const hx = idx * hillStep - Math.floor(speedScroll * 0.45);
+          const hh = tileHash(idx, 41);
+          // Sunlit grassy coastal embankment
+          ctx.fillStyle = hh % 2 === 0 ? '#4D7C0F' : '#65A30D';
+          ctx.beginPath();
+          ctx.ellipse(hx + 74, FLOOR_MIN_Y + 6, 96, 36 + (hh % 18), 0, Math.PI, 0);
+          ctx.fill();
+          // Roadside pine & cypress trees
+          for (let tr = 0; tr < 3; tr++) {
+            const tx = hx + 22 + tr * 44;
+            const ty = FLOOR_MIN_Y - 12 - ((hh + tr * 7) % 16);
+            px(ctx, tx - 1.5, ty, 3, 22, '#78350F');
+            drawRoundedPoly(ctx, [[tx - 9, ty + 4], [tx, ty - 22], [tx + 9, ty + 4]], '#15803D', INK, 0.8);
+          }
+        }
+        // Overhead highway sign gantry (realistic Russian blue/white highway road sign!)
+        for (let x = -(speedScroll % 260); x < VIRTUAL_W; x += 260) {
+          px(ctx, x + 10, 16, 7, FLOOR_MIN_Y, '#94A3B8');
+          px(ctx, x + 150, 16, 7, FLOOR_MIN_Y, '#94A3B8');
+          px(ctx, x + 10, 18, 147, 5, '#CBD5E1');
+          box(ctx, x + 36, 22, 96, 28, '#1D4ED8', '#FFFFFF', '#1E3A8A');
+          ctx.fillStyle = '#FFFFFF';
           ctx.font = 'bold 7px monospace';
-          ctx.fillText('PIZED-77 HWY', x + 48, 53);
+          ctx.fillText('АЛУПКА -> 12КМ', x + 46, 34);
+          ctx.fillStyle = '#FEF08A';
+          ctx.font = 'bold 6px monospace';
+          ctx.fillText('ПИВЗАВОД · ПРЯМО', x + 44, 44);
         }
       } else if (biome === 2) {
-        // BIOME 2: Cyber Suspension Mega-Bridge over Shimmering Neon Bay
-        // Shimmering dark water reflection horizon
-        px(ctx, 0, FLOOR_MIN_Y - 26, VIRTUAL_W, 26, '#091124');
-        for (let w = 0; w < 14; w++) {
+        // BIOME 2: Sunlit Suspension Bridge Over Sparkling Turquoise Sea!
+        const bayG = ctx.createLinearGradient(0, FLOOR_MIN_Y - 34, 0, FLOOR_MIN_Y + 14);
+        bayG.addColorStop(0, '#0284C7');
+        bayG.addColorStop(1, '#38BDF8');
+        ctx.fillStyle = bayG;
+        ctx.fillRect(0, FLOOR_MIN_Y - 32, VIRTUAL_W, 46);
+        for (let w = 0; w < 16; w++) {
           const wx = ((w * 43 - Math.floor(time * 90)) % VIRTUAL_W + VIRTUAL_W) % VIRTUAL_W;
-          px(ctx, wx, FLOOR_MIN_Y - 20 + (w % 4) * 5, 22, 2, w % 2 === 0 ? 'rgba(255,42,133,0.35)' : 'rgba(0,229,255,0.35)');
+          px(ctx, wx, FLOOR_MIN_Y - 24 + (w % 4) * 5, 22, 1.5, 'rgba(255,255,255,0.65)');
         }
-        // Towering neon cable-stay bridge pylons & sweeping diagonal cables
-        for (let x = -(Math.floor(speedScroll * 0.85) % 240); x < VIRTUAL_W + 240; x += 240) {
-          box(ctx, x, 6, 16, FLOOR_MIN_Y - 6, '#1E1B3A', '#FF2A85', INK);
-          px(ctx, x + 6, 10, 4, FLOOR_MIN_Y - 20, '#00E5FF');
-          ctx.strokeStyle = 'rgba(0, 229, 255, 0.45)';
+        // Crisp white/silver sunlit suspension bridge pylons & steel cables
+        for (let x = -(Math.floor(speedScroll * 0.78) % 240); x < VIRTUAL_W + 240; x += 240) {
+          box(ctx, x, 6, 16, FLOOR_MIN_Y + 8, '#E2E8F0', '#FFFFFF', '#64748B');
+          px(ctx, x + 5, 10, 6, FLOOR_MIN_Y - 14, '#CBD5E1');
+          ctx.strokeStyle = 'rgba(241, 245, 249, 0.85)';
           ctx.lineWidth = 1.2;
           ctx.beginPath();
           for (let c = 1; c <= 4; c++) {
             ctx.moveTo(x + 8, 12 + c * 10);
-            ctx.lineTo(x + 8 - c * 28, FLOOR_MIN_Y - 12);
+            ctx.lineTo(x + 8 - c * 28, FLOOR_MIN_Y);
             ctx.moveTo(x + 8, 12 + c * 10);
-            ctx.lineTo(x + 8 + c * 28, FLOOR_MIN_Y - 12);
+            ctx.lineTo(x + 8 + c * 28, FLOOR_MIN_Y);
           }
           ctx.stroke();
         }
       } else {
-        // BIOME 3: Refinery Viaduct Approach — Flaming Gas Stacks & Red-Alert Arches
-        for (let x = -(Math.floor(speedScroll * 0.75) % 156); x < VIRTUAL_W + 156; x += 156) {
-          // Industrial steel refinery arch + flaming chimney
-          px(ctx, x + 16, 12, 10, FLOOR_MIN_Y - 12, '#2D1A26');
-          px(ctx, x, 12, 156, 6, '#7F1D1D');
-          px(ctx, x + 8, 19, 140, 2, '#FF2A85');
-          // Overhead toxic green pipeline crossing highway
-          box(ctx, x, 46, 156, 9, '#14532D', '#39FF14', INK);
-          // Flaming gas flare on chimney
-          const fl = Math.sin(time * 18 + x) * 4;
-          ctx.fillStyle = '#F97316';
+        // BIOME 3: Sunlit Industrial Viaduct Approaching Brewery!
+        for (let x = -(Math.floor(speedScroll * 0.72) % 168); x < VIRTUAL_W + 168; x += 168) {
+          px(ctx, x + 16, 14, 10, FLOOR_MIN_Y, '#64748B');
+          px(ctx, x, 14, 168, 6, '#94A3B8');
+          box(ctx, x, 48, 168, 9, '#15803D', '#4ADE80', '#052E16');
+          // Daytime industrial exhaust vent plume
+          const puff = (time * 32 + x) % 24;
+          ctx.fillStyle = `rgba(255, 255, 255, ${0.55 * (1 - puff / 24)})`;
           ctx.beginPath();
-          ctx.moveTo(x + 15, 12);
-          ctx.lineTo(x + 21, 0 + fl * 0.5);
-          ctx.lineTo(x + 27, 12);
+          ctx.arc(x + 21, 10 - puff * 0.4, 5 + puff * 0.25, 0, Math.PI * 2);
           ctx.fill();
         }
       }
     }
 
-    // High-speed neon guardrail
-    box(ctx, 0, FLOOR_MIN_Y - 12, VIRTUAL_W, 12, '#334155', '#64748B', '#0F172A');
-    for (let x = -(speedScroll % 42); x < VIRTUAL_W; x += 42) {
-      px(ctx, x, FLOOR_MIN_Y - 8, 18, 4, biome === 3 ? '#FF2A85' : '#39FF14');
+    // Smooth Sloped Sun-Baked Gray Highway Asphalt + Silver Guardrail!
+    drawSlopedGroundSurface(ctx, 4, camX, '#46505D', '#CBD5E1', '#1E293B', '#64748B');
+
+    // Sloped metal W-beam guardrail + orange reflectors along road edge
+    ctx.strokeStyle = '#94A3B8';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    for (let x = 0; x <= VIRTUAL_W + 12; x += 12) {
+      const sx = Math.min(VIRTUAL_W, x);
+      const gy = FLOOR_MIN_Y - 5 + getGroundElevation(4, camX + sx);
+      if (x === 0) ctx.moveTo(sx, gy);
+      else ctx.lineTo(sx, gy);
+    }
+    ctx.stroke();
+    for (let x = -(speedScroll % 44); x < VIRTUAL_W; x += 44) {
+      const gy = FLOOR_MIN_Y - 6 + getGroundElevation(4, camX + Math.max(0, x));
+      px(ctx, x, gy, 8, 3, '#F97316');
     }
 
-    // Asphalt & rushing cyber-highway lanes
-    px(ctx, 0, FLOOR_MIN_Y, VIRTUAL_W, VIRTUAL_H - FLOOR_MIN_Y, '#0F111B');
+    // Sloped crisp white dashed highway lane markings
     for (const laneY of [184, 220]) {
       for (let x = -(speedScroll % 72); x < VIRTUAL_W; x += 72) {
-        px(ctx, x, laneY, 36, 3, biome === 2 ? '#00E5FF' : '#FACC15');
+        const ly = laneY + getGroundElevation(4, camX + Math.max(0, x + 18));
+        px(ctx, x, ly, 36, 3, '#F8FAFC');
       }
     }
-    // Wind & neon reflection speed-lines
-    for (let s = 0; s < 10; s++) {
-      const lx = VIRTUAL_W - ((Math.floor(time * 720) + s * 83) % (VIRTUAL_W + 60));
-      px(ctx, lx, 158 + (s * 11) % 94, 24, 1, s % 2 === 0 ? 'rgba(0,229,255,0.28)' : 'rgba(255,42,133,0.24)');
+    // Subtle sunlit asphalt wind-rush streaks
+    for (let s = 0; s < 8; s++) {
+      const lx = VIRTUAL_W - ((Math.floor(time * 540) + s * 91) % (VIRTUAL_W + 60));
+      const ly = 160 + (s * 11) % 88 + getGroundElevation(4, camX + Math.max(0, lx));
+      px(ctx, lx, ly, 22, 1, 'rgba(255,255,255,0.22)');
     }
-    px(ctx, 0, VIRTUAL_H - 9, VIRTUAL_W, 9, '#1E293B');
 
   // =========================================================================
-  // LEVEL 5: 3-ACT FACTORY CORE (BIO-VATS -> SERVER MAINFRAME -> DIRECTOR'S PENTHOUSE)
+  // LEVEL 6 (LIGHT): BRIGHT DAYLIGHT FACTORY ATRIUM & SUNLIT GLASS PENTHOUSE!
   // =========================================================================
   } else {
     if (camX > 6400) {
-      // ACT 3: DIRECTOR'S PANORAMIC CYBER-PENTHOUSE (Boss Arena!)
+      // ACT 3: DIRECTOR'S PANORAMIC SUNLIT GLASS PENTHOUSE (Daylight Boss Arena!)
       drawCyberSkyline(ctx, level, camX * 0.4, time);
-      // Tinted floor-to-ceiling armored glass overlay
-      px(ctx, 0, 0, VIRTUAL_W, FLOOR_MIN_Y, 'rgba(4, 19, 14, 0.56)');
-      // Obsidian & emerald penthouse window mullions
-      for (let x = -(midScroll % 88); x < VIRTUAL_W; x += 88) {
-        box(ctx, x, 0, 10, FLOOR_MIN_Y, '#111827', '#334155', INK);
-        px(ctx, x + 4, 4, 2, FLOOR_MIN_Y - 8, '#39FF14');
+      // Warm diagonal golden sunbeams streaming through giant floor-to-ceiling windows!
+      for (let r = 0; r < 4; r++) {
+        const rx = 38 + r * 124;
+        ctx.fillStyle = 'rgba(255, 251, 235, 0.22)';
+        ctx.beginPath();
+        ctx.moveTo(rx, 0);
+        ctx.lineTo(rx + 46, 0);
+        ctx.lineTo(rx - 14, FLOOR_MIN_Y + 40);
+        ctx.lineTo(rx - 62, FLOOR_MIN_Y + 40);
+        ctx.closePath();
+        ctx.fill();
       }
-      // Giant rotating holographic PIZED-77 Viral Reactor Emblem
+      // Sleek architectural brushed-aluminum window mullions
+      for (let x = -(midScroll % 96); x < VIRTUAL_W; x += 96) {
+        box(ctx, x, 0, 8, FLOOR_MIN_Y + 12, '#E2E8F0', '#FFFFFF', '#94A3B8');
+      }
+      // Crisp executive PIZED-77 corporate glass emblem
       const cx = VIRTUAL_W / 2;
-      const cy = 78;
-      ctx.strokeStyle = 'rgba(57,255,20,0.48)';
+      const cy = 72;
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.55)';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(cx, cy, 38, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 34, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.strokeStyle = 'rgba(0,229,255,0.45)';
-      ctx.beginPath();
-      ctx.arc(cx, cy, 46, time * 1.4, time * 1.4 + Math.PI * 1.2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(cx, cy, 46, time * 1.4 + Math.PI, time * 1.4 + Math.PI * 2.1);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(57,255,20,0.8)';
+      ctx.fillStyle = '#065F46';
       ctx.font = 'bold 10px monospace';
-      ctx.fillText('PIZED-77', cx - 26, cy + 3);
-      ctx.fillStyle = 'rgba(255,42,133,0.75)';
+      ctx.fillText('PIZED-77', cx - 25, cy + 3);
+      ctx.fillStyle = '#0F172A';
       ctx.font = 'bold 6px monospace';
-      ctx.fillText('DIRECTOR SUITE', cx - 28, cy + 16);
+      ctx.fillText('DIRECTOR PENTHOUSE', cx - 34, cy + 15);
 
-      // Polished obsidian & laser-grid penthouse floor
-      px(ctx, 0, FLOOR_MIN_Y, VIRTUAL_W, VIRTUAL_H - FLOOR_MIN_Y, '#0B1615');
-      px(ctx, 0, FLOOR_MIN_Y, VIRTUAL_W, 4, '#39FF14');
-      for (let x = -(Math.floor(camX) % 64); x < VIRTUAL_W; x += 64) {
-        px(ctx, x, FLOOR_MIN_Y + 4, 2, VIRTUAL_H - FLOOR_MIN_Y, '#14302B');
-        px(ctx, x + 16, 198, 28, 2, 'rgba(57,255,20,0.16)');
+      // Polished bright cream-marble penthouse floor with emerald geometric inlays!
+      drawSlopedGroundSurface(ctx, 6, camX, '#E5E7EB', '#F8FAFC', '#94A3B8');
+      const mStart = Math.floor(camX / 64) - 1;
+      for (let k = 0; k < 10; k++) {
+        const idx = mStart + k;
+        const rx = idx * 64 - camX;
+        const rEl = getGroundElevation(6, idx * 64 + 24);
+        px(ctx, rx, FLOOR_MIN_Y + 6 + rEl, 1.5, VIRTUAL_H - FLOOR_MIN_Y, '#CBD5E1');
+        px(ctx, rx + 14, 198 + rEl, 30, 2, 'rgba(16, 185, 129, 0.28)');
       }
     } else if (camX > 3100) {
-      // ACT 2: CYBER-SERVER MAINFRAME & PIZED-77 VIRAL LABORATORY
-      px(ctx, 0, 0, VIRTUAL_W, FLOOR_MIN_Y, '#060D14');
-      const tileW = 116;
+      // ACT 2: BRIGHT DAYLIGHT GLASS R&D LAB & STERILE MAINFRAME CORRIDOR
+      drawCyberSkyline(ctx, level, camX * 0.35, time);
+      px(ctx, 0, 0, VIRTUAL_W, 18, '#E2E8F0');
+      px(ctx, 0, 18, VIRTUAL_W, 3, '#94A3B8');
+      // Bright interior wall backdrop with large upper clerestory daylight windows
+      px(ctx, 0, 62, VIRTUAL_W, FLOOR_MIN_Y - 46, '#E2E8F0');
+
+      const tileW = 118;
       const startIdx = Math.floor(midScroll / tileW) - 1;
       for (let k = 0; k < 6; k++) {
         const wIdx = startIdx + k;
         const sx = wIdx * tileW - midScroll;
-        const variant = ((wIdx % 3) + 3) % 3;
+        const h = tileHash(wIdx, 62);
+        const variant = h % 5;
+        const el = Math.round(getGroundElevation(6, camX + sx + tileW * 0.5));
+
+        ctx.save();
+        ctx.translate(0, el);
+        // Sunlit glass skylight frame
+        box(ctx, sx + 6, 22, 106, 36, 'rgba(224,242,254,0.35)', '#FFFFFF', '#94A3B8');
 
         if (variant === 0) {
-          // Tall Blinking Quantum Server Racks
-          box(ctx, sx + 8, 24, 44, 126, '#0F172A', '#00E5FF', INK);
-          box(ctx, sx + 60, 24, 44, 126, '#0F172A', '#39FF14', INK);
-          for (let ry = 32; ry < 140; ry += 10) {
-            const blinkA = Math.floor(time * 8 + ry + wIdx) % 3 === 0;
-            const blinkB = Math.floor(time * 6 + ry * 2 + wIdx) % 2 === 0;
-            px(ctx, sx + 14, ry, 20, 3, blinkA ? '#00E5FF' : '#1E293B');
-            px(ctx, sx + 38, ry, 8, 3, blinkB ? '#FF2A85' : '#1E293B');
-            px(ctx, sx + 66, ry, 24, 3, blinkB ? '#39FF14' : '#1E293B');
-            px(ctx, sx + 94, ry, 5, 3, '#FFB000');
+          // Clean White & Sky-Blue Quantum Server Racks
+          box(ctx, sx + 10, 48, 44, 108, '#F8FAFC', '#FFFFFF', '#94A3B8');
+          box(ctx, sx + 62, 48, 44, 108, '#F8FAFC', '#FFFFFF', '#94A3B8');
+          for (let ry = 56; ry < 142; ry += 10) {
+            const blink = Math.floor(time * 7 + ry + wIdx) % 3 === 0;
+            px(ctx, sx + 16, ry, 22, 3, blink ? '#0284C7' : '#CBD5E1');
+            px(ctx, sx + 42, ry, 6, 3, '#10B981');
+            px(ctx, sx + 68, ry, 24, 3, !blink ? '#10B981' : '#CBD5E1');
           }
         } else if (variant === 1) {
-          // Cryo-Specimen Tube containing Floating Mutant Silhouette
-          box(ctx, sx + 20, 22, 74, 128, '#111827', '#475569', INK);
-          box(ctx, sx + 30, 34, 54, 102, '#052E16', '#39FF14', INK);
+          // Daylight Glass Bio-Specimen Tank
+          box(ctx, sx + 22, 42, 72, 114, '#CBD5E1', '#FFFFFF', '#64748B');
+          box(ctx, sx + 32, 52, 52, 92, '#DCFCE7', '#FFFFFF', '#16A34A');
           const bob = Math.sin(time * 2.4 + wIdx) * 4;
-          // Mutant silhouette floating inside glass
-          ctx.fillStyle = 'rgba(6, 78, 59, 0.85)';
+          ctx.fillStyle = 'rgba(21, 128, 61, 0.65)';
           ctx.beginPath();
-          ctx.ellipse(sx + 57, 78 + bob, 14, 22, 0, 0, Math.PI * 2);
+          ctx.ellipse(sx + 58, 92 + bob, 13, 20, 0, 0, Math.PI * 2);
           ctx.fill();
-          px(ctx, sx + 52, 68 + bob, 3, 3, '#FF2A85');
-          px(ctx, sx + 60, 68 + bob, 3, 3, '#FF2A85');
-          // Rising bubbles
-          const by = 128 - (Math.floor(time * 40 + wIdx * 19) % 86);
-          px(ctx, sx + 40, by, 4, 4, '#BBF7D0');
-          px(ctx, sx + 70, ((by + 30) % 86) + 42, 3, 3, '#39FF14');
-        } else {
-          // Holographic DNA / Virus Double-Helix Terminal
-          box(ctx, sx + 10, 34, 96, 82, '#090C11', '#00E5FF', INK);
-          for (let d = 0; d < 12; d++) {
-            const dx = sx + 18 + d * 7;
-            const y1 = 75 + Math.sin(time * 4 + d * 0.7) * 18;
-            const y2 = 75 - Math.sin(time * 4 + d * 0.7) * 18;
-            px(ctx, dx, Math.min(y1, y2), 1, Math.abs(y2 - y1), 'rgba(57,255,20,0.4)');
+          const by = 136 - (Math.floor(time * 36 + wIdx * 19) % 72);
+          px(ctx, sx + 42, by, 4, 4, '#FFFFFF');
+        } else if (variant === 2) {
+          // Daylight DNA Analysis Screen + Lab Desk
+          box(ctx, sx + 12, 54, 92, 62, '#0F172A', '#38BDF8', INK);
+          for (let d = 0; d < 11; d++) {
+            const dx = sx + 20 + d * 7;
+            const y1 = 84 + Math.sin(time * 4 + d * 0.7) * 14;
+            const y2 = 84 - Math.sin(time * 4 + d * 0.7) * 14;
+            px(ctx, dx, Math.min(y1, y2), 1, Math.abs(y2 - y1), 'rgba(56,189,248,0.5)');
             px(ctx, dx - 1, y1 - 1, 3, 3, '#39FF14');
-            px(ctx, dx - 1, y2 - 1, 3, 3, '#FF2A85');
+            px(ctx, dx - 1, y2 - 1, 3, 3, '#38BDF8');
           }
-          box(ctx, sx + 22, 122, 72, 28, '#1E293B', '#475569', INK);
+          box(ctx, sx + 20, 122, 76, 32, '#F1F5F9', '#FFFFFF', '#94A3B8');
+        } else if (variant === 3) {
+          // Sunlit Glass Atrium Walkway + Indoor Ficus Trees in White Planters!
+          box(ctx, sx + 18, 126, 26, 26, '#FFFFFF', '#F8FAFC', '#94A3B8');
+          px(ctx, sx + 29, 98, 4, 30, '#78350F');
+          drawInkEllipse(ctx, sx + 31, 88, 15, 13, 0, '#16A34A', '#4ADE80', '#14532D', 0.9);
+          box(ctx, sx + 74, 126, 26, 26, '#FFFFFF', '#F8FAFC', '#94A3B8');
+          px(ctx, sx + 85, 102, 4, 26, '#78350F');
+          drawInkEllipse(ctx, sx + 87, 92, 13, 12, 0, '#15803D', '#86EFAC', '#052E16', 0.9);
+        } else {
+          // Clean White Sterile Cleanroom Airlock Doors
+          box(ctx, sx + 16, 56, 86, 98, '#F1F5F9', '#FFFFFF', '#94A3B8');
+          px(ctx, sx + 58, 58, 2, 94, '#64748B');
+          px(ctx, sx + 26, 74, 24, 32, '#BAE6FD');
+          px(ctx, sx + 68, 74, 24, 32, '#BAE6FD');
+          ctx.fillStyle = '#0F172A';
+          ctx.font = 'bold 6px monospace';
+          ctx.fillText('LAB SECTOR B', sx + 34, 68);
         }
+        ctx.restore();
       }
 
-      // Illuminated circuit-grid laboratory floor
-      px(ctx, 0, FLOOR_MIN_Y, VIRTUAL_W, VIRTUAL_H - FLOOR_MIN_Y, '#0C141E');
-      px(ctx, 0, FLOOR_MIN_Y, VIRTUAL_W, 4, '#00E5FF');
-      const fScroll = Math.floor(camX) % 56;
-      for (let x = -fScroll; x < VIRTUAL_W; x += 56) {
-        px(ctx, x, FLOOR_MIN_Y + 4, 1, VIRTUAL_H - FLOOR_MIN_Y, '#16273B');
-        px(ctx, x + 10, 206, 26, 2, 'rgba(0,229,255,0.22)');
+      drawSlopedGroundSurface(ctx, 6, camX, '#DCE4EE', '#F8FAFC', '#94A3B8');
+      const fStart = Math.floor(camX / 56) - 1;
+      for (let k = 0; k < 10; k++) {
+        const idx = fStart + k;
+        const rx = idx * 56 - camX;
+        const rEl = getGroundElevation(6, idx * 56 + 24);
+        px(ctx, rx, FLOOR_MIN_Y + 6 + rEl, 1, VIRTUAL_H - FLOOR_MIN_Y, '#CBD5E1');
+        px(ctx, rx + 10, 206 + rEl, 24, 2, 'rgba(2,132,199,0.22)');
       }
     } else {
-      // ACT 1: BREWERY FERMENTATION BIO-VATS, ROBOT ARMS & BOTTLING CONVEYORS
-      px(ctx, 0, 0, VIRTUAL_W, FLOOR_MIN_Y, '#07110D');
-      // Overhead steel catwalk gantry
-      px(ctx, 0, 18, VIRTUAL_W, 5, '#1E293B');
-      px(ctx, 0, 23, VIRTUAL_W, 2, '#39FF14');
+      // ACT 1: BRIGHT DAYLIGHT MODERN BREWERY HALL WITH SKYLIGHT SUNBEAMS!
+      drawCyberSkyline(ctx, level, camX * 0.3, time);
+      // Bright light-steel architectural hall wall & overhead skylight beam
+      px(ctx, 0, 56, VIRTUAL_W, FLOOR_MIN_Y - 40, '#DCE4EC');
+      px(ctx, 0, 16, VIRTUAL_W, 6, '#CBD5E1');
+      px(ctx, 0, 22, VIRTUAL_W, 2, '#10B981');
 
-      const tileW = 114;
+      const tileW = 116;
       const startIdx = Math.floor(midScroll / tileW) - 1;
       for (let k = 0; k < 6; k++) {
         const wIdx = startIdx + k;
         const vx = wIdx * tileW - midScroll;
-        const variant = ((wIdx % 3) + 3) % 3;
+        const h = tileHash(wIdx, 61);
+        const variant = h % 5;
+        const el = Math.round(getGroundElevation(6, camX + vx + tileW * 0.5));
+
+        ctx.save();
+        ctx.translate(0, el);
+
+        // Diagonal golden daylight beam pouring through upper atrium window
+        if (wIdx % 2 === 0) {
+          ctx.fillStyle = 'rgba(255, 251, 235, 0.24)';
+          ctx.beginPath();
+          ctx.moveTo(vx + 20, 22);
+          ctx.lineTo(vx + 68, 22);
+          ctx.lineTo(vx + 22, FLOOR_MIN_Y + 20);
+          ctx.lineTo(vx - 22, FLOOR_MIN_Y + 20);
+          ctx.closePath();
+          ctx.fill();
+        }
 
         if (variant === 0) {
-          // Colossal Bubbling Green-Beer Fermentation Vat
-          box(ctx, vx + 12, 30, 62, 120, '#1F2937', '#475569', '#0F172A');
-          box(ctx, vx + 19, 40, 48, 90, '#052E16', '#39FF14', INK);
-          const by = 122 - (Math.floor(time * 38 + wIdx * 25) % 74);
-          px(ctx, vx + 28, by, 6, 6, '#39FF14');
-          px(ctx, vx + 46, ((by + 28) % 74) + 48, 5, 5, '#BBF7D0');
-          // Side vertical feed pipe
-          box(ctx, vx + 82, 24, 14, 126, '#334155', '#94A3B8', INK);
-          px(ctx, vx + 86, 30, 4, 114, '#39FF14');
+          // Gleaming Stainless-Steel Beer Fermentation Vat with Green Sight Glass
+          box(ctx, vx + 12, 34, 62, 122, '#CBD5E1', '#FFFFFF', '#64748B');
+          box(ctx, vx + 20, 44, 46, 86, '#14532D', '#4ADE80', '#052E16');
+          const by = 122 - (Math.floor(time * 38 + wIdx * 25) % 70);
+          px(ctx, vx + 30, by, 6, 6, '#39FF14');
+          px(ctx, vx + 46, ((by + 28) % 70) + 50, 5, 5, '#BBF7D0');
+          box(ctx, vx + 82, 28, 14, 128, '#94A3B8', '#F8FAFC', '#475569');
+          px(ctx, vx + 86, 34, 4, 114, '#22C55E');
         } else if (variant === 1) {
-          // Articulated Overhead Robot Bottling Claw + Sparking Fuse Panel
-          px(ctx, vx + 6, 26, 102, 124, '#111A18');
+          // Bright Industrial Yellow Robot Bottling Arm + Control Console
           const armSwing = Math.sin(time * 3.5 + wIdx) * 12;
-          ctx.strokeStyle = '#FACC15';
+          ctx.strokeStyle = '#EAB308';
           ctx.lineWidth = 4;
           ctx.beginPath();
           ctx.moveTo(vx + 56, 24);
           ctx.lineTo(vx + 56 + armSwing, 68);
           ctx.lineTo(vx + 56 + armSwing * 0.5, 102);
           ctx.stroke();
-          px(ctx, vx + 50 + armSwing * 0.5, 100, 12, 8, '#FF2A85');
-          // Industrial control panel with blinking alerts
-          box(ctx, vx + 16, 98, 28, 42, '#1E293B', '#64748B', INK);
-          px(ctx, vx + 20, 104, 20, 10, '#090C11');
-          px(ctx, vx + 22, 106, 10, 3, Math.floor(time * 5 + wIdx) % 2 === 0 ? '#39FF14' : '#FF2A85');
-        } else {
-          // Pressurized Mixing Boiler + Giant «PIZED-77» Stencil Tank
-          box(ctx, vx + 8, 38, 96, 108, '#172226', '#475569', INK);
-          box(ctx, vx + 18, 52, 76, 42, '#090C11', '#39FF14', INK);
+          px(ctx, vx + 50 + armSwing * 0.5, 100, 12, 8, '#334155');
+          box(ctx, vx + 16, 102, 30, 48, '#F1F5F9', '#FFFFFF', '#64748B');
+          px(ctx, vx + 20, 108, 22, 12, '#0F172A');
+          px(ctx, vx + 22, 111, 12, 3, Math.floor(time * 5 + wIdx) % 2 === 0 ? '#22C55E' : '#F59E0B');
+        } else if (variant === 2) {
+          // Stainless Mixing Boiler «PIZED-77» with Hazard Base
+          box(ctx, vx + 8, 42, 96, 110, '#E2E8F0', '#FFFFFF', '#64748B');
+          box(ctx, vx + 18, 56, 76, 40, '#0F172A', '#10B981', INK);
           ctx.fillStyle = '#39FF14';
           ctx.font = 'bold 9px monospace';
-          ctx.fillText('PIZED-77', vx + 28, 72);
-          ctx.fillStyle = '#FFB000';
+          ctx.fillText('PIZED-77', vx + 28, 74);
+          ctx.fillStyle = '#FACC15';
           ctx.font = 'bold 6px monospace';
-          ctx.fillText('BATCH #999', vx + 32, 86);
-          // Hazard stripes
+          ctx.fillText('BATCH #999', vx + 32, 88);
           for (let s = 12; s < 96; s += 12) {
-            px(ctx, vx + s, 134, 6, 10, '#FACC15');
-            px(ctx, vx + s + 6, 134, 6, 10, '#090C11');
+            px(ctx, vx + s, 138, 6, 10, '#FACC15');
+            px(ctx, vx + s + 6, 138, 6, 10, '#0F172A');
           }
+        } else if (variant === 3) {
+          // Daylight Glass Observation Office Overlooking Brewery Floor
+          box(ctx, vx + 8, 48, 100, 62, '#F8FAFC', '#FFFFFF', '#64748B');
+          box(ctx, vx + 14, 54, 88, 38, '#BAE6FD', '#FFFFFF', '#0284C7');
+          // Desk & monitor silhouettes inside glass office
+          px(ctx, vx + 24, 78, 24, 14, '#334155');
+          px(ctx, vx + 64, 72, 18, 12, '#1E293B');
+          box(ctx, vx + 12, 114, 92, 40, '#CBD5E1', '#F8FAFC', '#64748B');
+        } else {
+          // Tall Atrium Window Bay + Indoor Potted Greenery + Safety Signage
+          box(ctx, vx + 10, 26, 96, 98, 'rgba(224,242,254,0.45)', '#FFFFFF', '#94A3B8');
+          px(ctx, vx + 56, 26, 4, 98, '#CBD5E1');
+          box(ctx, vx + 16, 128, 24, 24, '#FFFFFF', '#F8FAFC', '#94A3B8');
+          drawInkEllipse(ctx, vx + 28, 114, 13, 14, 0, '#16A34A', '#4ADE80', '#14532D', 0.9);
+          box(ctx, vx + 62, 126, 38, 24, '#FACC15', '#FEF08A', '#A16207');
+          ctx.fillStyle = '#0F172A';
+          ctx.font = 'bold 6px monospace';
+          ctx.fillText('ZONE A', vx + 68, 140);
         }
+        ctx.restore();
       }
 
-      // Factory floor + animated green-beer bottling conveyor belt
-      px(ctx, 0, FLOOR_MIN_Y, VIRTUAL_W, VIRTUAL_H - FLOOR_MIN_Y, '#141B23');
-      box(ctx, 0, FLOOR_MIN_Y + 6, VIRTUAL_W, 14, '#272E3B', '#475569', INK);
+      // Bright Polished Light-Epoxy Factory Floor + Green-Beer Conveyor Belt!
+      drawSlopedGroundSurface(ctx, 6, camX, '#CBD5E1', '#F1F5F9', '#64748B');
       const bScroll = Math.floor(time * 75) % 24;
-      for (let x = -bScroll; x < VIRTUAL_W; x += 24) {
-        px(ctx, x, FLOOR_MIN_Y + 9, 9, 8, '#39FF14');
-        px(ctx, x + 2, FLOOR_MIN_Y + 8, 5, 2, '#ECFCCB');
-      }
-      const gScroll = Math.floor(camX) % 64;
-      for (let x = -gScroll; x < VIRTUAL_W; x += 64) {
-        px(ctx, x, 212, 34, 2, '#1F2C38');
+      for (let x = 0; x < VIRTUAL_W; x += 24) {
+        const bEl = getGroundElevation(6, camX + x);
+        px(ctx, x, FLOOR_MIN_Y + 7 + bEl, 24, 11, '#334155');
+        px(ctx, x - (bScroll % 24) + 12, FLOOR_MIN_Y + 9 + bEl, 8, 7, '#22C55E');
+        px(ctx, x - (bScroll % 24) + 14, FLOOR_MIN_Y + 8 + bEl, 4, 2, '#ECFCCB');
       }
     }
   }
@@ -3993,18 +4493,21 @@ function drawLevelLandmarks(
 ): void {
   const pulse = 0.5 + 0.5 * Math.sin(time * 5.5);
 
-  // 1. Render Interactive Jumpable Road Hazards & Obstacles across the street!
+  // 1. Render Interactive Jumpable Road Hazards & Obstacles anchored to sloped terrain!
   if (level.roadHazards) {
     for (const hz of level.roadHazards) {
       const sx = Math.round(hz.x - camX);
       if (sx < -150 || sx > VIRTUAL_W + 150) continue;
+
+      const hzElev = Math.round(getGroundElevation(level.id, hz.x));
+      ctx.save();
+      ctx.translate(0, hzElev);
 
       const x0 = sx - hz.w / 2;
       const y0 = hz.y - hz.h / 2;
       const warnBlink = Math.floor(time * 7) % 2 === 0;
 
       if (hz.kind === 'bridge_hole') {
-        // Approach warning chevrons & blinking road flares on left side
         for (let c = 0; c < 3; c++) {
           const cx = x0 - 28 + c * 9;
           ctx.strokeStyle = warnBlink ? '#FACC15' : '#FF2A85';
@@ -4048,8 +4551,8 @@ function drawLevelLandmarks(
         ctx.fill();
 
         const waterShift = Math.floor(time * 60) % 18;
-        px(ctx, x0 + 10 + (waterShift % 10), hz.y - 4, 22, 2, 'rgba(0, 229, 255, 0.38)');
-        px(ctx, x0 + 22 - (waterShift % 8), hz.y + 6, 26, 2, 'rgba(255, 42, 133, 0.34)');
+        px(ctx, x0 + 10 + (waterShift % 10), hz.y - 4, 22, 2, 'rgba(56, 189, 248, 0.55)');
+        px(ctx, x0 + 22 - (waterShift % 8), hz.y + 6, 26, 2, 'rgba(186, 230, 253, 0.45)');
 
         ctx.strokeStyle = '#94A3B8';
         ctx.lineWidth = 1.4;
@@ -4068,12 +4571,9 @@ function drawLevelLandmarks(
         ctx.font = 'bold 6px monospace';
         ctx.fillText('ПРОВАЛ!', sx - 16, y0 - 5);
       } else if (hz.kind === 'slime_river') {
-        // Bubbling radioactive green PIZED-77 river cutting across the ENTIRE street!
         const topY = FLOOR_MIN_Y + 1;
         const riverH = VIRTUAL_H - FLOOR_MIN_Y - 2;
-        // Cracked dark trench banks
         px(ctx, x0 - 4, topY, hz.w + 8, riverH, '#0F1A14');
-        // Glowing toxic emerald river core
         const rg = ctx.createLinearGradient(x0, topY, x0 + hz.w, topY);
         rg.addColorStop(0, '#14532D');
         rg.addColorStop(0.22, '#22C55E');
@@ -4083,7 +4583,6 @@ function drawLevelLandmarks(
         ctx.fillStyle = rg;
         ctx.fillRect(x0, topY, hz.w, riverH);
 
-        // Animated flowing sludge streaks & popping toxic bubbles!
         const flow = (time * 32) % 24;
         for (let b = 0; b < 6; b++) {
           const by = topY + ((b * 18 + flow) % (riverH - 8));
@@ -4095,70 +4594,63 @@ function drawLevelLandmarks(
           ctx.arc(bx + 3, by + 4, br, 0, Math.PI * 2);
           ctx.fill();
         }
-        // Neon warning edge stripes
         px(ctx, x0 - 3, topY, 3, riverH, warnBlink ? '#39FF14' : '#FACC15');
         px(ctx, x0 + hz.w, topY, 3, riverH, warnBlink ? '#39FF14' : '#FACC15');
+        ctx.fillStyle = '#090C11';
+        ctx.fillRect(sx - 28, topY - 10, 56, 8);
         ctx.fillStyle = '#D9F99D';
         ctx.font = 'bold 6px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('ЖИЖА · ПРЫЖОК!', sx, topY - 4);
+        ctx.fillText('ЖИЖА · ПРЫЖОК', sx, topY - 4);
         ctx.textAlign = 'left';
       } else if (hz.kind === 'barrier') {
-        // Heavy Concrete & Steel Cyberpunk Roadblock Jersey Barrier spanning full road (must jump!)
         const topY = FLOOR_MIN_Y + 2;
         const barH = VIRTUAL_H - FLOOR_MIN_Y - 6;
-        // Shadow
-        px(ctx, x0 + 5, topY + 2, hz.w, barH, 'rgba(0,0,0,0.45)');
-        // Concrete blocks stacked across street depth
+        px(ctx, x0 + 5, topY + 2, hz.w, barH, 'rgba(0,0,0,0.42)');
         for (let seg = 0; seg < 3; seg++) {
           const sy = topY + seg * (barH / 3);
           const sh = barH / 3 - 2;
           box(ctx, x0, sy, hz.w, sh, '#334155', '#94A3B8', INK);
-          // Yellow-black hazard warning top strip
           for (let hy = sy + 2; hy < sy + sh - 3; hy += 8) {
             px(ctx, x0 + 3, hy, hz.w - 6, 4, '#FACC15');
             px(ctx, x0 + 3, hy + 4, hz.w - 6, 4, '#090C11');
           }
-          // Glowing red roadblock strobe beacon
           px(ctx, sx - 2, sy + 2, 4, 3, warnBlink ? '#FF2A85' : '#7F1D1D');
         }
+        ctx.fillStyle = '#090C11';
+        ctx.fillRect(sx - 30, topY - 10, 60, 8);
         ctx.fillStyle = warnBlink ? '#FACC15' : '#FFFFFF';
         ctx.font = 'bold 6px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('БАРЬЕР · [K]', sx, topY - 4);
+        ctx.fillText('БАРЬЕР · ПРЫЖОК', sx, topY - 4);
         ctx.textAlign = 'left';
       } else if (hz.kind === 'boom_gate') {
-        // Security Striped Boom Barrier Gate spanning entire road!
         const topY = FLOOR_MIN_Y;
         const gateH = VIRTUAL_H - FLOOR_MIN_Y - 4;
-        // Checkpoint mechanism pylon at top sidewalk
         box(ctx, sx - 10, topY - 24, 20, 26, '#1E293B', '#64748B', INK);
         px(ctx, sx - 5, topY - 21, 10, 5, warnBlink ? '#FF2A85' : '#39FF14');
-        // Shadow on road
-        px(ctx, sx - 2, topY + 4, 9, gateH, 'rgba(0,0,0,0.42)');
-        // Red & white striped steel boom arm crossing the entire street
+        px(ctx, sx - 2, topY + 4, 9, gateH, 'rgba(0,0,0,0.4)');
         for (let py = topY; py < topY + gateH; py += 12) {
           const isRed = Math.floor(py / 12) % 2 === 0;
           box(ctx, sx - 5, py, 10, 12, isRed ? '#DC2626' : '#F8FAFC', isRed ? '#FCA5A5' : '#FFFFFF', INK);
         }
-        // Bottom support post
         box(ctx, sx - 7, topY + gateH - 8, 14, 10, '#334155', '#94A3B8', INK);
+        ctx.fillStyle = '#090C11';
+        ctx.fillRect(sx - 34, topY - 34, 68, 8);
         ctx.fillStyle = '#FACC15';
         ctx.font = 'bold 6px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('ШЛАГБАУМ · [K]', sx, topY - 27);
+        ctx.fillText('ШЛАГБАУМ · ПРЫЖОК', sx, topY - 28);
         ctx.textAlign = 'left';
       } else if (hz.kind === 'crate_row') {
-        // Solid wall of industrial wooden/beer crates lined up across the entire road!
         const topY = FLOOR_MIN_Y + 2;
         const rowH = VIRTUAL_H - FLOOR_MIN_Y - 6;
         const count = 4;
         const ch = rowH / count;
         for (let i = 0; i < count; i++) {
           const cy = topY + i * ch;
-          px(ctx, x0 + 5, cy + 3, hz.w, ch - 2, 'rgba(0,0,0,0.42)');
+          px(ctx, x0 + 5, cy + 3, hz.w, ch - 2, 'rgba(0,0,0,0.4)');
           box(ctx, x0, cy, hz.w, ch - 2, '#92400E', '#F59E0B', INK);
-          // Diagonal crate timber cross-brace
           ctx.strokeStyle = '#451A03';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
@@ -4167,53 +4659,57 @@ function drawLevelLandmarks(
           ctx.moveTo(x0 + hz.w - 3, cy + 3);
           ctx.lineTo(x0 + 3, cy + ch - 5);
           ctx.stroke();
-          // Green beer bio-stencil
           px(ctx, sx - 3, cy + ch * 0.35, 6, 4, '#39FF14');
         }
+        ctx.fillStyle = '#090C11';
+        ctx.fillRect(sx - 30, topY - 10, 60, 8);
         ctx.fillStyle = '#FDE047';
         ctx.font = 'bold 6px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('ЯЩИКИ · [K]', sx, topY - 4);
+        ctx.fillText('ЯЩИКИ · ПРЫЖОК', sx, topY - 4);
         ctx.textAlign = 'left';
       } else if (hz.kind === 'laser_gate') {
-        // Pulsing Cyberpunk Floor Laser Barrier spanning entire street!
         const topY = FLOOR_MIN_Y;
         const botY = VIRTUAL_H - 6;
         const phase = (time + (hz.pulseOffset ?? 0)) % 2.8;
-        const active = phase < 2.0; // On for 2.0s, brief 0.8s recharge blink — OR always jumpable!
+        const active = phase < 2.0;
 
-        // Top & bottom emitter pylons
         box(ctx, sx - 9, topY - 14, 18, 16, '#0F172A', '#00E5FF', INK);
         box(ctx, sx - 9, botY - 8, 18, 10, '#0F172A', '#00E5FF', INK);
         px(ctx, sx - 3, topY - 9, 6, 4, active ? '#FF2A85' : '#334155');
         px(ctx, sx - 3, botY - 5, 6, 3, active ? '#FF2A85' : '#334155');
 
         if (active) {
-          // Outer lethal magenta plasma glow
           ctx.fillStyle = `rgba(255, 42, 133, ${0.32 + pulse * 0.28})`;
           ctx.fillRect(sx - 6, topY + 2, 12, botY - topY - 10);
-          // Scorching twin laser cores
           px(ctx, sx - 2, topY + 2, 4, botY - topY - 10, '#FF2A85');
           px(ctx, sx - 0.8, topY + 2, 1.6, botY - topY - 10, '#FFFFFF');
         } else {
-          // Faint targeting guide line during brief recharge
           px(ctx, sx - 1, topY + 2, 2, botY - topY - 10, 'rgba(0, 229, 255, 0.35)');
         }
 
+        ctx.fillStyle = '#090C11';
+        ctx.fillRect(sx - 28, topY - 23, 56, 8);
         ctx.fillStyle = active ? '#FF2A85' : '#00E5FF';
         ctx.font = 'bold 6px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(active ? 'ЛАЗЕР! [K]' : 'ПЕРЕЗАРЯДКА', sx, topY - 17);
+        ctx.fillText(active ? 'ЛАЗЕР · ПРЫЖОК' : 'ПЕРЕЗАРЯДКА', sx, topY - 17);
         ctx.textAlign = 'left';
       }
+
+      ctx.restore();
     }
   }
 
-  // 2. Render Monumental World-Space Landmarks (15 unforgettable set-pieces!)
+  // 2. Render Monumental World-Space Landmarks anchored smoothly to sloped terrain!
   for (const lm of level.landmarks) {
     if (lm.kind === 'bridge_hole') continue;
     const sx = Math.round(lm.x - camX);
     if (sx < -220 || sx > VIRTUAL_W + 220) continue;
+
+    const lmElev = Math.round(getGroundElevation(level.id, lm.x));
+    ctx.save();
+    ctx.translate(0, lmElev);
 
     switch (lm.kind) {
       case 'statue_brewer': {
@@ -4792,6 +5288,7 @@ function drawLevelLandmarks(
         break;
       }
     }
+    ctx.restore();
   }
 }
 
