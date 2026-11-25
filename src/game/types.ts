@@ -34,6 +34,14 @@ export type WeaponId =
 
 export type LevelId = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
+export type PickupKind =
+  | 'beer'
+  | 'beer_bottle'
+  | 'fries'
+  | 'pork_knuckle'
+  | 'shawarma'
+  | 'weapon';
+
 export type EnemyKind =
   | 'drunk'
   | 'acid_punk'
@@ -42,6 +50,7 @@ export type EnemyKind =
   | 'guard_shield'
   | 'turret'
   | 'drone'
+  | 'quad_drone'
   | 'mini_heli'
   | 'heavy_heli'
   | 'biker'

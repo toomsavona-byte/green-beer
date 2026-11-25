@@ -1,4 +1,4 @@
-import { WeaponId } from './types';
+import { HeroId, WeaponId } from './types';
 import { MusicTrack, TRACKS, TrackPattern, TrackSection } from './musicTracks';
 
 export type { MusicTrack };
@@ -970,6 +970,76 @@ class SoundEngine {
     if (!this.allowSfx('melee', 45)) return;
     this.playNoise(heavy ? 0.12 : 0.07, heavy ? 520 : 1200, 'bandpass', heavy ? 0.28 : 0.18);
     this.playTone(heavy ? 180 : 280, 65, heavy ? 0.13 : 0.08, 'triangle', 0.2);
+  }
+
+  public playHeroMelee(heroId: HeroId): void {
+    this.unlock();
+    if (!this.allowSfx('hero_melee', 45)) return;
+
+    switch (heroId) {
+      case 'zavod_killer':
+        // Heavy hollow steel pipe CLANG!
+        this.playNoise(0.08, 460, 'bandpass', 0.24);
+        this.playTone(170, 58, 0.13, 'sawtooth', 0.24, 0.02);
+        this.playTone(595, 575, 0.26, 'triangle', 0.24, 0.025);
+        this.playTone(1215, 1175, 0.22, 'sine', 0.18, 0.025);
+        this.playTone(1890, 1810, 0.15, 'square', 0.1, 0.03);
+        break;
+      case 'bo':
+        // Mechanical RGB keyboard clatter-smash!
+        this.playTone(235, 92, 0.09, 'square', 0.2, 0.015);
+        this.playNoise(0.06, 3600, 'highpass', 0.22);
+        this.playTone(2250, 1450, 0.028, 'square', 0.13, 0.02);
+        this.playTone(3150, 1900, 0.025, 'square', 0.12, 0.045);
+        this.playTone(2650, 1600, 0.026, 'square', 0.11, 0.072);
+        this.playTone(3480, 2100, 0.022, 'square', 0.09, 0.098);
+        break;
+      case 'ded':
+        // Brass hookah clang + bubbly water-pipe gurgle!
+        this.playTone(840, 795, 0.19, 'triangle', 0.18, 0.02);
+        this.playTone(1440, 1360, 0.14, 'sine', 0.12, 0.025);
+        this.playTone(255, 445, 0.075, 'sine', 0.18, 0.045);
+        this.playTone(345, 575, 0.075, 'sine', 0.15, 0.095);
+        this.playNoise(0.11, 1300, 'bandpass', 0.17);
+        break;
+      case 'sandro':
+        // Fat electric bass guitar string slap & power chord slam!
+        this.playNoise(0.08, 680, 'bandpass', 0.24);
+        this.playTone(82.4, 76, 0.3, 'sawtooth', 0.3, 0.02);
+        this.playTone(110, 103, 0.26, 'triangle', 0.24, 0.025);
+        this.playTone(164.8, 152, 0.2, 'sawtooth', 0.16, 0.025);
+        this.playTone(330, 215, 0.12, 'sawtooth', 0.18, 0.02);
+        break;
+      case 'vano':
+        // Fast flexible fishing rod whip-swish + spinning reel click!
+        this.playNoise(0.13, 2400, 'bandpass', 0.26);
+        this.playTone(380, 1980, 0.068, 'sine', 0.16, 0);
+        this.playTone(1980, 520, 0.095, 'triangle', 0.16, 0.058);
+        this.playTone(2850, 1550, 0.032, 'square', 0.11, 0.085);
+        break;
+      case 'hooper':
+        // Punchy rock snare / tom drum smash + snare wire rattle!
+        this.playTone(220, 86, 0.16, 'triangle', 0.3, 0.015);
+        this.playTone(142, 56, 0.19, 'sine', 0.26, 0.015);
+        this.playTone(980, 410, 0.042, 'square', 0.17, 0.015);
+        this.playNoise(0.16, 2200, 'highpass', 0.28);
+        break;
+      case 'koren':
+        // Elastic spongy-psychedelic giant mushroom whomp!
+        this.playNoise(0.07, 460, 'lowpass', 0.2);
+        this.playTone(135, 355, 0.08, 'sine', 0.27, 0.015);
+        this.playTone(355, 110, 0.15, 'triangle', 0.24, 0.072);
+        this.playTone(940, 1520, 0.11, 'sine', 0.13, 0.055);
+        break;
+      case 'vadek':
+      default:
+        // Heavy hollow pressurized rubber car tire thud & bounce!
+        this.playNoise(0.09, 310, 'lowpass', 0.27);
+        this.playTone(150, 46, 0.17, 'sine', 0.33, 0.015);
+        this.playTone(72, 122, 0.085, 'triangle', 0.22, 0.08);
+        this.playTone(122, 54, 0.12, 'sine', 0.18, 0.145);
+        break;
+    }
   }
 
   public playHit(heavy = false): void {

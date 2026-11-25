@@ -28,6 +28,7 @@ import {
   HudSnapshot,
   LevelDef,
   LevelId,
+  PickupKind,
   RemoteInputState,
   StageClearSummary,
   WeaponId,
@@ -144,7 +145,7 @@ interface SimZoneEffect {
 
 interface SimPickup {
   id: number;
-  kind: 'beer' | 'beer_bottle' | 'weapon';
+  kind: PickupKind;
   x: number;
   y: number;
   weaponId?: WeaponId;
@@ -537,6 +538,9 @@ export class GameEngine {
         break;
       case 'melee':
         soundEngine.playMelee(Boolean(cue.a));
+        break;
+      case 'hero_melee':
+        soundEngine.playHeroMelee((cue.a as HeroId) || 'vadek');
         break;
       case 'hit':
         soundEngine.playHit(Boolean(cue.a));
@@ -1404,6 +1408,14 @@ export class GameEngine {
       }
     }
 
+    const isQuadWave =
+      zone.spawns.length > 0 && zone.spawns.every((sp) => sp.kind === 'quad_drone');
+    if (isQuadWave) {
+      this.showAnnouncement('ВОЛНА КВАДРОКОПТЕРОВ! СТРЕЛЯЙ И БЕЙ В ПРЫЖКЕ!', 2.6);
+      soundEngine.playBossWarn();
+      this.queueSfx('boss_warn');
+    }
+
     if (zone.dropWeapon && !isFlight && this.activeZoneIndex % 2 === 0) {
       this.pickups.push({
         id: this.nextEntityId++,
@@ -1417,7 +1429,7 @@ export class GameEngine {
     if (zone.dropBeer) {
       this.pickups.push({
         id: this.nextEntityId++,
-        kind: 'beer',
+        kind: this.pickHealKind(true),
         x: (forceDropFromTop ? 0 : this.camX) + 150 + Math.random() * 120,
         y: isFlight ? 90 + Math.random() * 92 : 185 + Math.random() * 40,
         timer: 26,
@@ -1692,21 +1704,44 @@ export class GameEngine {
       } else {
         const isHeavyMelee = p.heroId === 'zavod_killer' || p.heroId === 'sandro';
         p.meleeCd = isHeavyMelee ? 0.34 : 0.28;
-        p.meleeTimer = 0.16;
-        soundEngine.playMelee(isHeavyMelee);
-        this.queueSfx('melee', isHeavyMelee);
+        p.meleeTimer = isHeavyMelee ? 0.32 : 0.28;
+        soundEngine.playHeroMelee(p.heroId);
+        this.queueSfx('hero_melee', p.heroId);
         const meleeDmg = (p.heroId === 'zavod_killer' ? 36 : p.heroId === 'sandro' ? 28 : 22) + hero.stats.damage * 2;
         const reach = p.heroId === 'zavod_killer' ? 52 : 44;
 
         const strikeDir = isHighway && p.aimX < -0.2 ? -1 : p.facing;
         const snapshot = [...this.enemies];
+        let warnedLowJump = false;
+        let landedHit = false;
         for (const e of snapshot) {
-          if (e.hacked || e.dead || (e.dropping && e.z > 36)) continue;
+          if (e.hacked || e.dead || (e.dropping && e.z > 54)) continue;
           const relX = (e.x - p.x) * strikeDir;
           const relY = Math.abs(e.y - p.y);
+          if (e.kind === 'quad_drone') {
+            // Flying enemy quadcopters can ONLY be struck with melee while jumping (or shot in mid-air!)
+            if (relX > -16 && relX < reach + 10 && relY < 34) {
+              if (p.z > 8) {
+                landedHit = true;
+                this.damageEnemy(e, meleeDmg, p.slot, true, strikeDir * (isHeavyMelee ? 92 : 54), 0.18, 0, false);
+              } else if (!warnedLowJump) {
+                warnedLowJump = true;
+                this.addFloatingText(e.x, e.y - 54, 'БЕЙ В ПРЫЖКЕ!', '#FACC15');
+              }
+            }
+            continue;
+          }
           if (relX > -14 && relX < reach + (e.isBoss ? 18 : 0) && relY < 28) {
+            landedHit = true;
             this.damageEnemy(e, meleeDmg, p.slot, true, strikeDir * (isHeavyMelee ? 92 : 54), 0.18, 0, false);
           }
+        }
+        if (landedHit) {
+          // Visceral heavy melee smash feel (same damage, punchier visual impact!)
+          this.hitstopTimer = Math.max(this.hitstopTimer, isHeavyMelee ? 0.048 : 0.036);
+          this.triggerShake(isHeavyMelee ? 4.4 : 3.0, 0.14);
+          this.spawnParticles(p.x + strikeDir * 24, p.y, p.z + 20, '#FFFFFF', 6, 115);
+          this.spawnParticles(p.x + strikeDir * 26, p.y, p.z + 18, '#FACC15', 7, 130);
         }
 
         if (this.friendlyFire) {
@@ -1849,6 +1884,7 @@ export class GameEngine {
       guard_shield: { hp: 96, speed: 32, score: 320, shielded: true },
       turret: { hp: 75, speed: 0, score: 280 },
       drone: { hp: 48, speed: 60, score: 250 },
+      quad_drone: { hp: 46, speed: 78, score: 280 },
       mini_heli: { hp: 46, speed: 70, score: 260 },
       heavy_heli: { hp: 96, speed: 48, score: 420 },
       biker: { hp: 64, speed: 74, score: 300 },
@@ -1865,7 +1901,7 @@ export class GameEngine {
     };
 
     const cfg = presets[kind];
-    // Dynamic enemy HP escalation along the mega-level + difficulty tier
+    // Dynamic enemy HP escalation along the mega-level + difficulty tier (+15% global difficulty boost)
     const progress = this.level ? Math.min(1, this.activeZoneIndex / Math.max(1, this.level.zones.length)) : 0;
     const progressHpMult = isBoss ? 1.0 : 1 + progress * 0.45;
     const diffHpMult =
@@ -1878,14 +1914,17 @@ export class GameEngine {
             ? 1.15
             : 1.1
           : 1.0;
-    const maxHp = Math.round(cfg.hp * coopScale * progressHpMult * diffHpMult);
+    const globalDiffHpMult = 1.15;
+    const maxHp = Math.round(cfg.hp * coopScale * progressHpMult * diffHpMult * globalDiffHpMult);
 
     const isFlight = this.level?.mode === 'flight';
     const startZ = dropFromTop
       ? (isBoss ? 235 : 205 + Math.random() * 35)
-      : kind === 'drone' && !isFlight
-        ? 20
-        : 0;
+      : kind === 'quad_drone' && !isFlight
+        ? 40
+        : kind === 'drone' && !isFlight
+          ? 20
+          : 0;
 
     const clampedY =
       kind === 'boss_electrician'
@@ -1911,7 +1950,7 @@ export class GameEngine {
       facing: -1,
       hp: maxHp,
       maxHp,
-      speed: cfg.speed,
+      speed: Math.round(cfg.speed * 1.06),
       attackCd: dropFromTop ? 1.2 : 1.0 + Math.random() * 0.8,
       telegraphTimer: 0,
       pendingAttack: 'none',
@@ -1946,7 +1985,7 @@ export class GameEngine {
       if (e.dropping) {
         e.vz -= 560 * dt;
         e.z += e.vz * dt;
-        const floorZ = e.kind === 'drone' ? 20 : 0;
+        const floorZ = e.kind === 'quad_drone' ? 40 : e.kind === 'drone' ? 20 : 0;
         if (e.z <= floorZ) {
           e.z = floorZ;
           e.vz = 0;
@@ -2205,6 +2244,19 @@ export class GameEngine {
         const mdx = desiredX - e.x;
         e.x += Math.sign(mdx) * Math.min(Math.abs(mdx), e.speed * slowMult * dt);
         e.y += Math.sign(dy) * Math.min(Math.abs(dy), e.speed * 0.7 * slowMult * dt);
+      } else if (e.kind === 'quad_drone') {
+        // Hostile combat quadcopter: hovers high overhead (above ground shots/flamethrower!) and strafes swiftly!
+        if (!isFlight) {
+          e.z = 40 + Math.sin(e.animTime * 4.6 + e.id * 1.3) * 4.2;
+        }
+        const sideSign = e.id % 2 === 0 ? 1 : -1;
+        const desiredX = target.x + sideSign * (88 + Math.sin(e.animTime * 1.7 + e.id) * 42);
+        const clampedTargetX = Math.max(this.camX + 36, Math.min(this.camX + VIRTUAL_W - 36, desiredX));
+        const qdx = clampedTargetX - e.x;
+        e.x += Math.sign(qdx) * Math.min(Math.abs(qdx), e.speed * slowMult * dt);
+        const desiredY = target.y + Math.cos(e.animTime * 2.2 + e.id) * 28;
+        const qdy = desiredY - e.y;
+        e.y += Math.sign(qdy) * Math.min(Math.abs(qdy), e.speed * 0.78 * slowMult * dt);
       } else if (e.kind === 'guard_gunner' || e.kind === 'drone' || e.kind === 'boss_director') {
         const desiredDist = e.kind === 'boss_director' ? 160 : e.kind === 'drone' ? 115 : 132;
         if (Math.abs(dx) < desiredDist - 24) {
@@ -2274,11 +2326,11 @@ export class GameEngine {
       } else {
         e.attackCd = 0.45 * cdMult;
       }
-    } else if (e.kind === 'drone' || e.kind === 'mini_heli') {
-      // Combat drones & small helicopters lock on visibly and fire crisp bursts!
+    } else if (e.kind === 'drone' || e.kind === 'quad_drone' || e.kind === 'mini_heli') {
+      // Combat drones, quadcopters & small helicopters lock on visibly and fire crisp bursts!
       e.pendingAttack = 'shoot';
-      e.telegraphTimer = 0.4 * tgMult;
-      e.attackCd = (1.35 + Math.random() * 0.4) * cdMult;
+      e.telegraphTimer = (e.kind === 'quad_drone' ? 0.36 : 0.4) * tgMult;
+      e.attackCd = ((e.kind === 'quad_drone' ? 1.25 : 1.35) + Math.random() * 0.38) * cdMult;
     } else if (e.kind === 'heavy_heli') {
       e.pendingAttack = 'barrage';
       e.telegraphTimer = 0.46 * tgMult;
@@ -2455,15 +2507,20 @@ export class GameEngine {
           this.spawnParticles(e.x + e.facing * 14, e.y - 14, 16, '#38BDF8', 8, 95);
           soundEngine.playWeaponSfx('firewall', false);
           this.queueSfx('weapon', 'firewall', false, 0);
-        } else if (e.kind === 'drone' || e.kind === 'mini_heli') {
-          // Helicopter/drone fires a crisp twin-bolt plasma burst!
-          const spreads = this.level.id === 7 ? [-0.11, 0.11] : [-0.07, 0.07];
-          const boltSpeed = e.kind === 'mini_heli' ? 235 : 245;
+        } else if (e.kind === 'drone' || e.kind === 'quad_drone' || e.kind === 'mini_heli') {
+          // Helicopter/drone/quadcopter fires a crisp twin-bolt plasma burst!
+          const spreads =
+            e.kind === 'quad_drone'
+              ? [-0.08, 0.08]
+              : this.level.id === 7
+                ? [-0.11, 0.11]
+                : [-0.07, 0.07];
+          const boltSpeed = e.kind === 'quad_drone' ? 248 : e.kind === 'mini_heli' ? 235 : 245;
           for (const sp of spreads) {
             this.projectiles.push({
               x: e.x + e.facing * 12,
               y: e.y,
-              z: isFlight ? 14 : 30,
+              z: isFlight ? 14 : e.kind === 'quad_drone' ? 36 : 30,
               vx: Math.cos(ang + sp) * boltSpeed * projSpeed,
               vy: Math.sin(ang + sp) * boltSpeed * vyScale * projSpeed,
               damage: 1,
@@ -2476,12 +2533,12 @@ export class GameEngine {
               stunDuration: 0,
               hacksTech: false,
               smokeCloud: false,
-              color: e.kind === 'mini_heli' ? '#FACC15' : '#FF2A85',
+              color: e.kind === 'quad_drone' ? '#EF4444' : e.kind === 'mini_heli' ? '#FACC15' : '#FF2A85',
               glowColor: '#FEF08A',
               radius: 4.2,
             });
           }
-          this.spawnParticles(e.x + e.facing * 14, e.y, isFlight ? 14 : 32, '#FF2A85', 5, 70);
+          this.spawnParticles(e.x + e.facing * 14, e.y, isFlight ? 14 : e.kind === 'quad_drone' ? 38 : 32, '#FF2A85', 5, 70);
           soundEngine.playWeaponSfx('firewall', false);
           this.queueSfx('weapon', 'firewall', false, 0);
         } else {
@@ -2657,7 +2714,7 @@ export class GameEngine {
       this.spawnParticles(e.x + e.facing * 10, e.y, 20, '#00E5FF', 4, 65);
     }
 
-    if (hacksTech && (e.kind === 'turret' || e.kind === 'drone') && !e.hacked) {
+    if (hacksTech && (e.kind === 'turret' || e.kind === 'drone' || e.kind === 'quad_drone') && !e.hacked) {
       e.hacked = true;
       e.hp = Math.max(e.hp, Math.round(e.maxHp * 0.8));
       soundEngine.playHack();
@@ -2776,9 +2833,9 @@ export class GameEngine {
 
     const roll = Math.random();
     if (roll < beerChance) {
-      // Split HP pickups: 0.33L bottle (+1 HP) drops regularly; full frothy beer mug (Full HP) is rarer!
-      const mugChance = minHp <= 1 ? 0.38 : 0.22;
-      const dropKind: 'beer' | 'beer_bottle' = Math.random() < mugChance ? 'beer' : 'beer_bottle';
+      // Varied street-food & beer heals at the same overall frequency!
+      const bigHealChance = minHp <= 1 ? 0.38 : 0.22;
+      const dropKind = this.pickHealKind(Math.random() < bigHealChance);
       this.pickups.push({
         id: this.nextEntityId++,
         kind: dropKind,
@@ -2883,6 +2940,8 @@ export class GameEngine {
         const enemySnapshot = [...this.enemies];
         for (const e of enemySnapshot) {
           if (e.hacked || e.dead || (e.dropping && e.z > 75) || pr.hitIds.has(e.id)) continue;
+          // Flying quadcopters hover high overhead: ground-level shots & flamethrower pass underneath — must jump to shoot them!
+          if (e.kind === 'quad_drone' && this.level.mode !== 'flight' && pr.z < 29) continue;
           const { hitW, hitH, targetY } = this.getEnemyHitbox(e);
           if (Math.abs(pr.x - e.x) < hitW + pr.radius && Math.abs(pr.y - targetY) < hitH + pr.radius) {
             pr.hitIds.add(e.id);
@@ -2959,7 +3018,7 @@ export class GameEngine {
                 ? 34
                 : e.kind === 'heavy_heli'
                   ? 28
-                  : e.kind === 'mini_heli'
+                  : e.kind === 'mini_heli' || e.kind === 'quad_drone'
                     ? 22
                     : 18;
     const hitH =
@@ -2969,9 +3028,11 @@ export class GameEngine {
           ? 46
           : e.isBoss
             ? 32
-            : e.kind === 'heavy_heli'
-              ? 22
-              : 20;
+            : e.kind === 'quad_drone'
+              ? 24
+              : e.kind === 'heavy_heli'
+                ? 22
+                : 20;
     const targetY =
       e.kind === 'boss_electrician'
         ? e.y - 34
@@ -3005,6 +3066,7 @@ export class GameEngine {
       const snapshot = [...this.enemies];
       for (const e of snapshot) {
         if (e.hacked || e.dead) continue;
+        if (e.kind === 'quad_drone' && this.level.mode !== 'flight' && pr.z < 28) continue;
         const { hitW, hitH, targetY } = this.getEnemyHitbox(e);
         const dx = Math.max(0, Math.abs(pr.x - e.x) - hitW);
         const dy = Math.max(0, Math.abs(pr.y - targetY) - hitH);
@@ -3026,6 +3088,7 @@ export class GameEngine {
           z.tickCd = 0.45;
           const snapshot = [...this.enemies];
           for (const e of snapshot) {
+            if (e.kind === 'quad_drone' && this.level.mode !== 'flight') continue;
             if (!e.hacked && !e.dead && Math.hypot(e.x - z.x, e.y - z.y) <= z.radius) {
               this.damageEnemy(e, 9, z.ownerSlot ?? 1, false, 0, 0, 0, false, true);
             }
@@ -3049,6 +3112,18 @@ export class GameEngine {
     }
   }
 
+  private pickHealKind(preferBig: boolean): Exclude<PickupKind, 'weapon'> {
+    const r = Math.random();
+    if (preferBig) {
+      if (r < 0.38) return 'beer';
+      if (r < 0.74) return 'pork_knuckle';
+      return 'shawarma';
+    }
+    if (r < 0.38) return 'beer_bottle';
+    if (r < 0.76) return 'fries';
+    return 'shawarma';
+  }
+
   private updatePickups(dt: number): void {
     for (let i = this.pickups.length - 1; i >= 0; i--) {
       const pk = this.pickups[i];
@@ -3058,23 +3133,33 @@ export class GameEngine {
         continue;
       }
 
-      if (pk.kind === 'beer' || pk.kind === 'beer_bottle') {
+      if (pk.kind !== 'weapon') {
         for (const pl of this.players) {
           if (!pl.alive) continue;
           if (Math.hypot(pl.x - pk.x, pl.y - pk.y) < 28) {
-            if (pk.kind === 'beer') {
-              // Full beer mug = 100% full HP & armor restore!
+            if (pk.kind === 'beer' || pk.kind === 'pork_knuckle') {
+              // Full frothy beer mug or roasted pork knuckle = 100% full HP & armor restore!
               pl.hpSegments = 3;
               pl.armorPips = pl.maxArmorPips;
               pl.score += 300;
-              this.addFloatingText(pl.x, pl.y - 44, 'КРУЖКА! ПОЛНОЕ HP!', '#FFB000');
-              this.spawnParticles(pl.x, pl.y, 16, '#FFB000', 16, 90);
+              const label = pk.kind === 'pork_knuckle' ? 'СВИНАЯ РУЛЬКА! ПОЛНОЕ HP!' : 'КРУЖКА! ПОЛНОЕ HP!';
+              const col = pk.kind === 'pork_knuckle' ? '#FB923C' : '#FFB000';
+              this.addFloatingText(pl.x, pl.y - 44, label, col);
+              this.spawnParticles(pl.x, pl.y, 16, col, 16, 90);
+            } else if (pk.kind === 'shawarma') {
+              // Grilled shawarma / kebab = +2 HP segments!
+              pl.hpSegments = Math.min(3, pl.hpSegments + 2);
+              pl.score += 220;
+              this.addFloatingText(pl.x, pl.y - 44, 'ШАУРМА! +2 HP!', '#4ADE80');
+              this.spawnParticles(pl.x, pl.y, 15, '#4ADE80', 13, 82);
             } else {
-              // 0.33L bottle = +1 HP segment!
+              // 0.33L beer bottle or golden fries = +1 HP segment!
               pl.hpSegments = Math.min(3, pl.hpSegments + 1);
               pl.score += 150;
-              this.addFloatingText(pl.x, pl.y - 44, '0.33 · +1 HP', '#FDE047');
-              this.spawnParticles(pl.x, pl.y, 14, '#FDE047', 10, 72);
+              const label = pk.kind === 'fries' ? 'КАРТОШКА ФРИ! +1 HP' : '0.33 · +1 HP';
+              const col = pk.kind === 'fries' ? '#FACC15' : '#FDE047';
+              this.addFloatingText(pl.x, pl.y - 44, label, col);
+              this.spawnParticles(pl.x, pl.y, 14, col, 10, 72);
             }
             soundEngine.playPickupBeer();
             this.queueSfx('beer');

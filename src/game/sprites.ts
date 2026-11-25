@@ -1,6 +1,6 @@
 import { HERO_MAP, HEROES, WEAPON_MAP } from './data';
 import { getCameraOffsetY, getGroundElevation, getGroundSlope, isDaylightLevel, tileHash } from './terrain';
-import { CutsceneDef, EnemyKind, HeroId, LevelDef, WeaponId } from './types';
+import { CutsceneDef, EnemyKind, HeroId, LevelDef, PickupKind, WeaponId } from './types';
 
 export const VIRTUAL_W = 480;
 export const VIRTUAL_H = 270;
@@ -549,8 +549,24 @@ export function drawHeroSprite(ctx: CanvasRenderingContext2D, o: HeroRenderOpts)
   // ── FLUID MULTI-JOINT SKELETAL KINEMATICS ──
   const runPhase = safeTime * 9.8;
   const breath = Math.sin(safeTime * 3.8);
-  const meleeProgress = o.meleeTimer > 0 ? Math.max(0, Math.min(1, 1 - o.meleeTimer / 0.24)) : 0;
-  const meleeStrike = o.meleeTimer > 0 ? Math.sin(meleeProgress * Math.PI) : 0;
+  const meleeDur = o.heroId === 'zavod_killer' || o.heroId === 'sandro' ? 0.32 : 0.28;
+  const meleeProgress = o.meleeTimer > 0 ? Math.max(0, Math.min(1, 1 - o.meleeTimer / meleeDur)) : 0;
+  // 3-stage over-the-shoulder smash curve: wind-up behind shoulder -> explosive forward smash -> heavy follow-through
+  let meleeTorsoDelta = 0;
+  if (o.meleeTimer > 0) {
+    if (meleeProgress < 0.28) {
+      const w = meleeProgress / 0.28;
+      meleeTorsoDelta = -0.22 * Math.sin(w * Math.PI * 0.5);
+    } else if (meleeProgress < 0.56) {
+      const s = (meleeProgress - 0.28) / 0.28;
+      const snap = 1 - (1 - s) * (1 - s);
+      meleeTorsoDelta = -0.22 + 0.54 * snap;
+    } else {
+      const f = (meleeProgress - 0.56) / 0.44;
+      meleeTorsoDelta = 0.32 * (1 - f * 0.42);
+    }
+  }
+  const meleeStrike = o.meleeTimer > 0 ? Math.max(0, meleeTorsoDelta / 0.32) : 0;
   const hurtTilt = o.hurtTimer > 0 ? -0.22 * Math.min(1, o.hurtTimer / 0.22) : 0;
 
   // Leg joint angles (hipAngle: + forward, - back; kneeBend: >= 0 bends shin backward!)
@@ -602,13 +618,16 @@ export function drawHeroSprite(ctx: CanvasRenderingContext2D, o: HeroRenderOpts)
     bodyBob = -Math.abs(cPhase) * 2.2;
     torsoLean = 0.14 + Math.abs(s) * 0.04 + hurtTilt;
   } else if (o.meleeTimer > 0) {
-    // Combat lunge during melee punch!
-    frontHip = 0.45 + meleeStrike * 0.2;
-    frontKnee = 0.35;
-    backHip = -0.45 - meleeStrike * 0.15;
-    backKnee = 0.2;
-    torsoLean = 0.06 + meleeStrike * 0.22;
-    bodyBob = -meleeStrike * 1.6;
+    // Full-body over-the-shoulder wind-up & devastating forward lunge!
+    frontHip = 0.42 + meleeTorsoDelta * 0.95;
+    frontKnee = 0.36 + Math.max(0, meleeTorsoDelta) * 0.45;
+    backHip = -0.44 - meleeTorsoDelta * 0.7;
+    backKnee = 0.22;
+    torsoLean = 0.05 + meleeTorsoDelta + hurtTilt;
+    bodyBob = meleeProgress < 0.28 ? 1.2 : -meleeStrike * 2.2;
+  }
+  if (o.meleeTimer > 0 && (airborne || o.moving)) {
+    torsoLean += meleeTorsoDelta * 0.85;
   }
 
   const hipCenterY = -19.5 * prof.bodyScaleY + bodyBob;
@@ -621,13 +640,13 @@ export function drawHeroSprite(ctx: CanvasRenderingContext2D, o: HeroRenderOpts)
   ctx.save();
   ctx.translate(0, hipCenterY);
   ctx.rotate(torsoLean);
-  if (o.heroId === 'vano') {
-    // Sleek harpoon fishing rod strapped diagonally behind back
+  if (o.heroId === 'vano' && o.meleeTimer <= 0) {
+    // Sleek harpoon fishing rod strapped diagonally behind back (hidden while swinging it!)
     drawTaperedLimb(ctx, -9, -22, 4, -2, 1.2, 1.4, '#CBD5E1', '#F8FAFC', '#475569', 0.9);
     drawInkEllipse(ctx, -8.5, -22.5, 2.8, 1.8, -0.5, '#0EA5E9', '#7DD3FC', '#0369A1', 0.9);
     drawInkEllipse(ctx, -3, -9, 2.2, 2.0, 0, '#F59E0B', '#FEF08A', '#92400E', 0.9);
-  } else if (o.heroId === 'sandro') {
-    // Sculpted rock bass guitar case slung across back
+  } else if (o.heroId === 'sandro' && o.meleeTimer <= 0) {
+    // Sculpted rock bass guitar case slung across back (hidden while swinging the bass!)
     drawTaperedLimb(ctx, -9.5, -23, -3, -3, 2.2, 3.6, '#1E1B2E', '#4C1D95', '#09090B', 1.1);
     drawRoundedRect(ctx, -11.5, -26, 4.2, 5.2, 1.0, '#581C87', INK, 1.0);
   } else if (o.heroId === 'koren') {
@@ -1385,57 +1404,69 @@ export function drawHeroSprite(ctx: CanvasRenderingContext2D, o: HeroRenderOpts)
   );
 
   if (o.meleeTimer > 0) {
-    // Explosive multi-stage melee punch / heavy strike!
-    const heavy = o.heroId === 'zavod_killer' || o.heroId === 'sandro' || o.heroId === 'ded';
-    const punchReach = 8 + meleeStrike * (heavy ? 15 : 13);
-    const punchY = frontShoulderY + 2 - meleeStrike * 2.5;
-    const elbowX = frontShoulderX + punchReach * 0.48;
-    const elbowY = frontShoulderY + 3.5;
+    // Heavy over-the-shoulder overhead smash!
+    // Stage 1 (0..0.28): Cock arm & weapon HIGH behind the shoulder!
+    // Stage 2 (0.28..0.56): Explosive overhead chop forward with full arm extension!
+    // Stage 3 (0.56..1.0): Heavy follow-through slam & impact starburst (NO semicircle arc!)
+    let armAngle = -2.35;
+    let weaponAngle = -2.6;
+    let armLen = 13.5;
+    let impactFlash = 0;
 
-    drawTaperedLimb(ctx, frontShoulderX, frontShoulderY, elbowX, elbowY, 3.1, 2.6, upperArmCol, upperArmHi, upperArmSh, 1.15);
+    if (meleeProgress < 0.28) {
+      const w = meleeProgress / 0.28;
+      const easeW = Math.sin(w * Math.PI * 0.5);
+      armAngle = -1.55 - 0.92 * easeW;      // lifts behind head/shoulder
+      weaponAngle = -1.95 - 0.72 * easeW;   // weapon cocks back over shoulder
+      armLen = 11.5 + 1.5 * easeW;
+    } else if (meleeProgress < 0.56) {
+      const s = (meleeProgress - 0.28) / 0.28;
+      const snap = 1 - Math.pow(1 - s, 3);  // explosive whip acceleration!
+      armAngle = -2.47 + 2.75 * snap;       // sweeps OVER head -> straight forward/down
+      weaponAngle = -2.67 + 3.05 * snap;    // slams from behind shoulder to +0.38 rad!
+      armLen = 13.0 + 4.2 * snap;
+      if (s > 0.6) impactFlash = (s - 0.6) / 0.4;
+    } else {
+      const f = (meleeProgress - 0.56) / 0.44;
+      armAngle = 0.28 + 0.16 * f;
+      weaponAngle = 0.38 + 0.2 * f;
+      armLen = 17.2 - 1.4 * f;
+      impactFlash = Math.max(0, 1 - f * 2.1);
+    }
+
+    const elbowX = frontShoulderX + Math.cos(armAngle - 0.22) * (armLen * 0.54);
+    const elbowY = frontShoulderY + Math.sin(armAngle - 0.22) * (armLen * 0.54);
+    const handX = frontShoulderX + Math.cos(armAngle) * armLen;
+    const handY = frontShoulderY + Math.sin(armAngle) * armLen;
+
+    drawTaperedLimb(ctx, frontShoulderX, frontShoulderY, elbowX, elbowY, 3.2, 2.7, upperArmCol, upperArmHi, upperArmSh, 1.15);
     drawTaperedLimb(
       ctx,
       elbowX,
       elbowY,
-      frontShoulderX + punchReach,
-      punchY,
-      2.6,
-      2.3,
+      handX,
+      handY,
+      2.7,
+      2.4,
       prof.bareArms ? c(prof.skinColor) : upperArmCol,
       hi(prof.skinColor),
       sh(prof.skinColor),
       1.15
     );
-    // Impact fist
+    drawHeroMeleeWeapon(ctx, o.heroId, handX, handY, weaponAngle, safeTime, impactFlash);
+    // Gripping fist clearly clamped around the handle
     drawInkEllipse(
       ctx,
-      frontShoulderX + punchReach + 2.2,
-      punchY,
-      heavy ? 3.8 : 3.1,
-      heavy ? 3.5 : 2.9,
-      0,
+      handX,
+      handY,
+      3.0,
+      2.7,
+      armAngle,
       o.heroId === 'vadek' ? '#1F242D' : c(prof.skinColor),
       '#FFFFFF',
       sh(prof.skinColor),
-      1.15
+      1.1
     );
-
-    // 3-layer glowing kinetic crescent smear!
-    ctx.save();
-    ctx.translate(frontShoulderX + punchReach - 1, punchY);
-    ctx.strokeStyle = heavy ? 'rgba(251, 146, 60, 0.88)' : `${prof.rimColor}DD`;
-    ctx.lineWidth = heavy ? 5 : 3.8;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.arc(0, 0, heavy ? 15 : 12.5, -1.15, 1.15);
-    ctx.stroke();
-
-    ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.arc(1.2, 0, heavy ? 13 : 10.5, -0.88, 0.88);
-    ctx.stroke();
-    ctx.restore();
   } else {
     // 8-direction weapon + articulated gripping arm
     ctx.save();
@@ -1764,7 +1795,38 @@ function drawHeroOnBike(
   const armSh = sh(prof.bareArms ? prof.skinColor : prof.jacketColor);
   const recoil = o.shootTimer > 0 ? 1.8 : 0;
 
-  if (aimingBack) {
+  if (o.meleeTimer > 0) {
+    const meleeDur = o.heroId === 'zavod_killer' || o.heroId === 'sandro' ? 0.32 : 0.28;
+    const mp = Math.max(0, Math.min(1, 1 - o.meleeTimer / meleeDur));
+    let armAng = -2.2;
+    let wpnAng = -2.45;
+    let flash = 0;
+    if (mp < 0.28) {
+      const w = mp / 0.28;
+      armAng = -1.5 - 0.85 * w;
+      wpnAng = -1.85 - 0.7 * w;
+    } else if (mp < 0.56) {
+      const s = (mp - 0.28) / 0.28;
+      const snap = 1 - Math.pow(1 - s, 3);
+      armAng = -2.35 + 2.6 * snap;
+      wpnAng = -2.55 + 2.9 * snap;
+      if (s > 0.6) flash = (s - 0.6) / 0.4;
+    } else {
+      const f = (mp - 0.56) / 0.44;
+      armAng = 0.25 + 0.16 * f;
+      wpnAng = 0.35 + 0.18 * f;
+      flash = Math.max(0, 1 - f * 2.1);
+    }
+    const hx = Math.cos(armAng) * 11.5;
+    const hy = Math.sin(armAng) * 11.5;
+    ctx.save();
+    ctx.translate(aimingBack ? -12.5 : -6.5, -28.5 + rumble);
+    if (aimingBack) ctx.scale(-1, 1);
+    drawTaperedLimb(ctx, 0, -0.5, hx, hy, 2.5, 2.0, armCol, armHi, armSh, 1.0);
+    drawHeroMeleeWeapon(ctx, o.heroId, hx, hy, wpnAng, safeTime, flash);
+    drawInkEllipse(ctx, hx, hy, 2.4, 2.2, armAng, '#18181B', '#52525B', INK, 0.85);
+    ctx.restore();
+  } else if (aimingBack) {
     const rearAngle = Math.atan2(o.aimY, Math.max(0.2, -o.aimX));
     ctx.save();
     ctx.translate(-12.5, -28.8 + rumble);
@@ -1789,6 +1851,279 @@ function drawHeroOnBike(
 
   ctx.restore();
   void flash;
+}
+
+function drawMeleeImpactStar(ctx: CanvasRenderingContext2D, tipX: number, tipY: number, intensity: number, color: string): void {
+  if (intensity <= 0.05) return;
+  ctx.save();
+  ctx.translate(tipX, tipY);
+  const rOuter = (11 + intensity * 7);
+  const rInner = rOuter * 0.34;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2 - 0.25;
+    const r = i % 2 === 0 ? rOuter : rInner;
+    const pxp = Math.cos(a) * r;
+    const pyp = Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(pxp, pyp);
+    else ctx.lineTo(pxp, pyp);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Hot white impact core
+  ctx.fillStyle = '#FFFFFF';
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const r = i % 2 === 0 ? rOuter * 0.56 : rInner * 0.55;
+    const pxp = Math.cos(a) * r;
+    const pyp = Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(pxp, pyp);
+    else ctx.lineTo(pxp, pyp);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawHeroMeleeWeapon(
+  ctx: CanvasRenderingContext2D,
+  heroId: HeroId,
+  handX: number,
+  handY: number,
+  swingAngle: number,
+  t: number,
+  impactFlash = 0
+): void {
+  ctx.save();
+  ctx.translate(handX, handY);
+  ctx.rotate(swingAngle);
+
+  let tipX = 28;
+  let impactColor = '#FEF08A';
+
+  switch (heroId) {
+    case 'zavod_killer': {
+      // MASSIVE unmistakable industrial galvanized steel plumbing pipe with elbow-joint & red iron flange!
+      tipX = 33;
+      impactColor = '#FB923C';
+      // Black grip tape wrap at handle
+      drawRoundedRect(ctx, -3, -3.5, 9, 7.0, 1.2, '#1E293B', INK, 1.25);
+      px(ctx, -1, -2.5, 1.5, 5.0, '#475569');
+      px(ctx, 2.5, -2.5, 1.5, 5.0, '#475569');
+      // Thick long heavy steel pipe shaft
+      drawRoundedRect(ctx, 4.5, -3.4, 27, 6.8, 1.2, '#CBD5E1', INK, 1.35);
+      px(ctx, 6, -2.3, 24, 1.8, '#FFFFFF');   // bright chrome cylinder highlight
+      px(ctx, 6, 1.2, 24, 1.6, '#475569');    // deep cylindrical shadow
+      // Heavy industrial red cast-iron pipe coupling collar + 90-degree iron elbow head at tip!
+      drawRoundedRect(ctx, 22.5, -4.8, 4.8, 9.6, 1.0, '#DC2626', INK, 1.2);
+      px(ctx, 23.6, -3.4, 2.2, 6.6, '#FCA5A5');
+      // Thick angled pipe elbow-head + dark hollow bore hole so it screams STEEL PIPE!
+      drawRoundedRect(ctx, 27.5, -4.8, 6.2, 11.4, 1.6, '#94A3B8', INK, 1.3);
+      px(ctx, 29, -3.4, 3.2, 2.2, '#F8FAFC');
+      drawInkEllipse(ctx, 30.6, 5.2, 2.6, 1.7, 0, '#0F172A', '#334155', INK, 0.9);
+      break;
+    }
+    case 'bo': {
+      // Wide unmistakable mechanical RGB gaming keyboard swung like a club!
+      tipX = 28;
+      impactColor = '#00E5FF';
+      drawRoundedRect(ctx, 0, -6.8, 29, 13.6, 1.8, '#1E293B', INK, 1.35);
+      px(ctx, 2, -5.4, 25, 10.8, '#090D16');
+      // Crisp glowing neon RGB keycap matrix + spacebar!
+      const rgbCols = ['#00E5FF', '#39FF14', '#EC4899', '#FACC15'];
+      for (let row = 0; row < 3; row++) {
+        for (let col = 0; col < 7; col++) {
+          const kCol = rgbCols[(row + col + Math.floor(t * 12)) % rgbCols.length];
+          px(ctx, 3.0 + col * 3.3, -4.6 + row * 2.8, 2.5, 2.0, kCol);
+        }
+      }
+      // Spacebar along bottom row
+      px(ctx, 7.5, 3.4, 13, 1.7, '#38BDF8');
+      // Whipping coiled USB cable trailing off the far edge
+      ctx.strokeStyle = '#94A3B8';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(29, 0);
+      ctx.quadraticCurveTo(33.5, -5 + Math.sin(t * 22) * 3, 35.5, 3);
+      ctx.stroke();
+      break;
+    }
+    case 'ded': {
+      // Tall ornate brass hookah with emerald glass flask & glowing red coal bowl!
+      tipX = 32;
+      impactColor = '#F97316';
+      // Wide bulbous teal-emerald glass hookah flask near hand
+      drawInkEllipse(ctx, 4.5, 0, 7.2, 6.2, 0, '#0D9488', '#5EEAD4', '#115E59', 1.3);
+      px(ctx, 1.5, -3.5, 3.2, 1.8, '#CCFBF1');
+      // Long shiny brass hookah stem
+      drawRoundedRect(ctx, 10, -2.2, 18.5, 4.4, 0.9, '#D97706', INK, 1.25);
+      px(ctx, 11, -1.3, 16, 1.4, '#FEF08A');
+      // Ornate brass coal ash tray saucer
+      drawRoundedRect(ctx, 24.5, -6.8, 2.8, 13.6, 0.9, '#F59E0B', INK, 1.1);
+      // Clay shisha bowl with blazing orange-red coals!
+      drawRoundedRect(ctx, 27.2, -4.6, 5.8, 9.2, 1.4, '#7C2D12', INK, 1.2);
+      drawInkEllipse(ctx, 32.8, 0, 3.2, 3.8, 0, '#EF4444', '#FEF08A', '#991B1B', 0.95);
+      break;
+    }
+    case 'sandro': {
+      // Full-scale iconic 4-string rock bass guitar swung overhead like a battle axe!
+      tipX = 33;
+      impactColor = '#F43F5E';
+      // Headstock & tuning pegs behind grip
+      drawRoundedRect(ctx, -5.5, -3.2, 5.5, 6.4, 1.0, '#D97706', INK, 1.1);
+      // Long maple bass neck with frets
+      drawRoundedRect(ctx, -1, -2.3, 16.5, 4.6, 0.7, '#E2B47A', INK, 1.2);
+      for (let f = 2; f <= 13; f += 3) px(ctx, f, -1.8, 0.9, 3.6, '#78350F');
+      // Huge unmistakable double-cutaway crimson electric bass body!
+      drawRoundedPoly(
+        ctx,
+        [
+          [13.5, -6.4],
+          [19.5, -10.4],
+          [29.5, -8.8],
+          [34.0, -2.2],
+          [32.5, 6.4],
+          [24.5, 9.6],
+          [16.5, 7.6],
+          [13.5, 3.6],
+        ],
+        '#DC2626',
+        INK,
+        1.35
+      );
+      // Bright white pickguard + twin chrome pickups + bridge
+      drawRoundedRect(ctx, 17.5, -5.4, 10.5, 8.4, 2.0, '#F8FAFC', INK, 0.95);
+      px(ctx, 20.5, -4.2, 2.8, 6.8, '#0F172A');
+      px(ctx, 26.0, -3.8, 2.6, 6.0, '#94A3B8');
+      // 4 bright steel bass strings
+      ctx.strokeStyle = '#F1F5F9';
+      ctx.lineWidth = 0.75;
+      for (const sy of [-1.2, -0.4, 0.4, 1.2]) {
+        ctx.beginPath();
+        ctx.moveTo(-2, sy);
+        ctx.lineTo(28, sy);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'vano': {
+      // Long flexing cobalt fishing rod with big spinning reel & whipping lure!
+      tipX = 36;
+      impactColor = '#38BDF8';
+      // Cork handle + large gleaming blue spinning reel
+      drawRoundedRect(ctx, -3, -2.6, 8.5, 5.2, 1.1, '#D97706', INK, 1.15);
+      drawInkEllipse(ctx, 4.8, 4.8, 3.8, 3.3, 0, '#0284C7', '#7DD3FC', '#0C4A6E', 1.15);
+      // Long curved flexing graphite rod blank!
+      drawTaperedLimb(ctx, 5.5, 0, 36.5, -3.0, 2.3, 0.9, '#0EA5E9', '#E0F2FE', '#0369A1', 1.2);
+      // Gleaming metallic line guides
+      px(ctx, 13, 1.6, 1.8, 2.2, '#F8FAFC');
+      px(ctx, 22, 0.8, 1.6, 2.0, '#F8FAFC');
+      px(ctx, 30, -0.6, 1.4, 1.8, '#F8FAFC');
+      // Whipping fishing line & bright yellow/silver fish lure at tip
+      ctx.strokeStyle = '#E0F2FE';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(36.5, -3.0);
+      ctx.quadraticCurveTo(40.5, 3.2, 34.5, 9.2);
+      ctx.stroke();
+      drawInkEllipse(ctx, 34.5, 9.6, 2.8, 2.0, 0.3, '#FACC15', '#FFFFFF', '#92400E', 0.95);
+      break;
+    }
+    case 'hooper': {
+      // Big chrome-rimmed red rock snare/tom drum smashed forward!
+      tipX = 25;
+      impactColor = '#FACC15';
+      // Wooden handle stick mount
+      drawRoundedRect(ctx, -2, -2.0, 9.5, 4.0, 0.9, '#FDE68A', INK, 1.05);
+      // Chunky red cylindrical rock drum shell
+      drawRoundedRect(ctx, 7.0, -10.2, 19.5, 20.4, 4.0, '#DC2626', INK, 1.35);
+      // Giant bright white drumhead face!
+      drawInkEllipse(ctx, 18.0, 0, 8.4, 9.4, 0, '#F8FAFC', '#FFFFFF', '#CBD5E1', 1.3);
+      // Chrome hoops & tension lugs
+      drawRoundedRect(ctx, 6.8, -10.5, 3.2, 21.0, 1.0, '#CBD5E1', INK, 1.0);
+      px(ctx, 11.4, -7.8, 3.4, 2.2, '#F1F5F9');
+      px(ctx, 11.4, 5.6, 3.4, 2.2, '#F1F5F9');
+      px(ctx, 11.4, -1.1, 3.4, 2.2, '#F1F5F9');
+      break;
+    }
+    case 'koren': {
+      // MASSIVE unmistakable red-capped fly-agaric mushroom club!
+      tipX = 29;
+      impactColor = '#39FF14';
+      // Thick plump cream mushroom stalk
+      drawRoundedRect(ctx, -2, -3.8, 17, 7.6, 2.6, '#FEF3C7', INK, 1.3);
+      px(ctx, 0.5, -2.5, 13, 2.2, '#FFFFFF');
+      // Golden mushroom gills under cap
+      drawInkEllipse(ctx, 16.0, 0, 4.8, 9.8, 0, '#FDE68A', '#FEF9C3', '#D97706', 1.15);
+      // Huge bright scarlet fly-agaric dome cap!
+      drawRoundedPoly(
+        ctx,
+        [
+          [15.5, -12.4],
+          [23.5, -11.4],
+          [30.5, -6.0],
+          [32.0, 0],
+          [30.5, 6.0],
+          [23.5, 11.4],
+          [15.5, 12.4],
+        ],
+        '#EF4444',
+        INK,
+        1.4
+      );
+      // Bold iconic white polka dots all across the red cap!
+      drawInkEllipse(ctx, 22.0, -6.2, 2.8, 2.3, 0, '#FFFFFF', '#FFFFFF', '#E2E8F0', 0.65);
+      drawInkEllipse(ctx, 26.8, 0.2, 3.0, 2.6, 0, '#FFFFFF', '#FFFFFF', '#E2E8F0', 0.65);
+      drawInkEllipse(ctx, 21.2, 6.4, 2.6, 2.1, 0, '#FFFFFF', '#FFFFFF', '#E2E8F0', 0.65);
+      drawInkEllipse(ctx, 18.2, -0.4, 2.0, 1.8, 0, '#FFFFFF', '#FFFFFF', '#E2E8F0', 0.6);
+      break;
+    }
+    case 'vadek':
+    default: {
+      // HUGE heavy treaded black rubber car wheel/tire with bold 5-spoke silver alloy rim!
+      tipX = 26;
+      impactColor = '#FACC15';
+      const wx = 15.0;
+      // Big outer rubber tire
+      drawInkEllipse(ctx, wx, 0, 13.0, 13.0, 0, '#18181B', '#3F3F46', INK, 1.45);
+      // Chunky outer tire tread lugs
+      ctx.strokeStyle = '#52525B';
+      ctx.lineWidth = 1.6;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(wx + Math.cos(a) * 9.8, Math.sin(a) * 9.8);
+        ctx.lineTo(wx + Math.cos(a) * 12.8, Math.sin(a) * 12.8);
+        ctx.stroke();
+      }
+      // Bright silver alloy rim + 5 bold spokes + golden center lug hub
+      drawInkEllipse(ctx, wx, 0, 7.6, 7.6, 0, '#CBD5E1', '#FFFFFF', '#334155', 1.2);
+      ctx.strokeStyle = '#0F172A';
+      ctx.lineWidth = 1.6;
+      for (let s = 0; s < 5; s++) {
+        const sa = (s / 5) * Math.PI * 2 + 0.3;
+        ctx.beginPath();
+        ctx.moveTo(wx, 0);
+        ctx.lineTo(wx + Math.cos(sa) * 6.8, Math.sin(sa) * 6.8);
+        ctx.stroke();
+      }
+      drawInkEllipse(ctx, wx, 0, 2.6, 2.6, 0, '#FACC15', '#FEF9C3', '#854D0E', 0.85);
+      break;
+    }
+  }
+
+  // Visceral fatal-strike impact starburst right at the striking tip (NO semicircle!)
+  if (impactFlash > 0.05) {
+    drawMeleeImpactStar(ctx, tipX, 0, impactFlash, impactColor);
+  }
+
+  ctx.restore();
 }
 
 function drawHeroOnQuadcopter(
@@ -2156,7 +2491,7 @@ export function drawWeaponInHand(
 
 export function drawPickupSprite(
   ctx: CanvasRenderingContext2D,
-  kind: 'beer' | 'beer_bottle' | 'weapon',
+  kind: PickupKind,
   x: number,
   y: number,
   t: number,
@@ -2168,7 +2503,7 @@ export function drawPickupSprite(
 
   ctx.fillStyle = 'rgba(0,0,0,0.48)';
   ctx.beginPath();
-  ctx.ellipse(0, 2, kind === 'beer_bottle' ? 8.5 : 11, 3.4, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 2, kind === 'beer_bottle' || kind === 'fries' ? 8.5 : 11.5, 3.4, 0, 0, Math.PI * 2);
   ctx.fill();
 
   if (kind === 'beer') {
@@ -2222,6 +2557,119 @@ export function drawPickupSprite(
     ctx.font = 'bold 5px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('0.33', 0, -23.5 + bob);
+    ctx.textAlign = 'left';
+  } else if (kind === 'fries') {
+    // Crispy Golden French Fries in Red Street-Food Carton = +1 HP!
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.72)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.arc(0, -10 + bob, 10.5 + Math.sin(t * 7.5) * 1.2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Overflowing crispy golden fries sticking out at varied heights
+    const fryBars = [
+      { x: -6.2, y: -19, h: 10 },
+      { x: -4.0, y: -22, h: 12 },
+      { x: -1.6, y: -20.5, h: 11 },
+      { x: 0.8, y: -22.5, h: 12.5 },
+      { x: 3.2, y: -19.5, h: 10 },
+      { x: 5.0, y: -18, h: 9 },
+    ];
+    for (const f of fryBars) {
+      box(ctx, f.x, f.y + bob, 2.4, f.h, '#FACC15', '#FEF08A', '#B45309');
+    }
+    // Iconic red cardboard scoop carton with golden emblem stripe
+    drawRoundedPoly(
+      ctx,
+      [
+        [-7.5, -13 + bob],
+        [7.5, -13 + bob],
+        [5.6, -1 + bob],
+        [-5.6, -1 + bob],
+      ],
+      '#DC2626',
+      INK,
+      1.15
+    );
+    px(ctx, -4.5, -9.5 + bob, 9, 2.2, '#FACC15');
+    px(ctx, -5.8, -12 + bob, 1.5, 9, '#FCA5A5');
+    // Tag
+    ctx.fillStyle = '#090C11';
+    ctx.fillRect(-10, -30 + bob, 20, 7);
+    ctx.fillStyle = '#FACC15';
+    ctx.font = 'bold 5px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('ФРИ', 0, -24.5 + bob);
+    ctx.textAlign = 'left';
+  } else if (kind === 'pork_knuckle') {
+    // Hearty Roasted Bavarian Pork Knuckle (Свиная рулька) = FULL HP + Armor!
+    ctx.strokeStyle = 'rgba(251, 146, 60, 0.88)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(0, -9 + bob, 13.0 + Math.sin(t * 8) * 1.6, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Wooden serving platter base
+    drawInkEllipse(ctx, 0, -3.5 + bob, 11.5, 3.8, 0, '#78350F', '#B45309', '#451A03', 1.0);
+    // White bone protruding cleanly from the right end
+    drawRoundedRect(ctx, 6.5, -11.5 + bob, 6.5, 3.4, 1.2, '#F8FAFC', INK, 0.95);
+    drawInkEllipse(ctx, 12.8, -11.2 + bob, 2.0, 2.0, 0, '#F8FAFC', '#FFFFFF', '#CBD5E1', 0.8);
+    drawInkEllipse(ctx, 12.8, -8.5 + bob, 2.0, 2.0, 0, '#F8FAFC', '#FFFFFF', '#CBD5E1', 0.8);
+    // Glazed chestnut-brown roasted pork knuckle shank!
+    drawInkEllipse(ctx, -1.2, -10.5 + bob, 9.6, 6.4, -0.14, '#9A3412', '#FB923C', '#431407', 1.2);
+    // Crispy diamond glaze scoring & glossy highlight
+    ctx.strokeStyle = '#431407';
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(-6, -13.5 + bob);
+    ctx.lineTo(-2, -7.5 + bob);
+    ctx.moveTo(-1, -14.5 + bob);
+    ctx.lineTo(3, -8.0 + bob);
+    ctx.stroke();
+    px(ctx, -5.5, -14.2 + bob, 5, 1.6, '#FDBA74');
+    // Fresh green parsley sprig garnish
+    drawInkEllipse(ctx, -8.5, -6.5 + bob, 2.6, 1.8, -0.3, '#22C55E', '#86EFAC', '#14532D', 0.7);
+    // Tag
+    ctx.fillStyle = '#090C11';
+    ctx.fillRect(-13, -27 + bob, 26, 7);
+    ctx.fillStyle = '#FB923C';
+    ctx.font = 'bold 5px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('РУЛЬКА', 0, -21.5 + bob);
+    ctx.textAlign = 'left';
+  } else if (kind === 'shawarma') {
+    // Grilled Street Shawarma / Kebab Wrap = +2 HP!
+    ctx.strokeStyle = 'rgba(74, 222, 128, 0.82)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(0, -10 + bob, 11.5 + Math.sin(t * 7.8) * 1.4, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.translate(0, -10 + bob);
+    ctx.rotate(-0.38);
+    // Crisp white lower paper/foil wrapper
+    drawRoundedRect(ctx, -4.5, 1, 9, 9.5, 1.6, '#F8FAFC', INK, 1.0);
+    px(ctx, -3, 3, 6, 1.4, '#EF4444'); // red wrapper stripe
+    // Golden grilled lavash wrap cylinder
+    drawRoundedRect(ctx, -5.0, -8.5, 10, 11, 2.4, '#EAB308', INK, 1.15);
+    px(ctx, -3.5, -6.5, 2.0, 8, '#FEF08A'); // warm pita sheen
+    // Dark charcoal grill sear stripes
+    px(ctx, -3.8, -5.0, 7.6, 1.2, '#854D0E');
+    px(ctx, -3.8, -1.6, 7.6, 1.2, '#854D0E');
+    // Bursting top stuffing: green lettuce, red tomato, spiced roasted kebab meat!
+    drawInkEllipse(ctx, -2.5, -9.2, 3.0, 2.0, -0.2, '#22C55E', '#86EFAC', '#14532D', 0.8);
+    drawInkEllipse(ctx, 2.4, -9.0, 2.6, 1.8, 0.2, '#EF4444', '#FCA5A5', '#991B1B', 0.8);
+    drawInkEllipse(ctx, 0.2, -9.8, 2.5, 1.7, 0, '#92400E', '#F59E0B', '#451A03', 0.8);
+    ctx.restore();
+
+    // Tag
+    ctx.fillStyle = '#090C11';
+    ctx.fillRect(-13, -29 + bob, 26, 7);
+    ctx.fillStyle = '#4ADE80';
+    ctx.font = 'bold 5px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('ШАУРМА', 0, -23.5 + bob);
     ctx.textAlign = 'left';
   } else if (weaponId) {
     const w = WEAPON_MAP[weaponId];
@@ -2621,6 +3069,83 @@ export function drawEnemySprite(ctx: CanvasRenderingContext2D, e: EnemyRenderOpt
       if (e.telegraphTimer > 0) {
         drawInkEllipse(ctx, 15.5, by + 5.2, 2.8, 2.8, 0, '#FEF08A', '#FFFFFF', '#FF2A85', 0.6);
       }
+      break;
+    }
+
+    case 'quad_drone': {
+      // Hostile Flying 4-Rotor Combat Quadcopter — hovers overhead, hit by shooting or jump-melee!
+      const hover = Math.sin(t * 11) * 2.4;
+      const tilt = Math.sin(t * 4.2) * 0.08;
+      const tint = e.hacked ? '#00E5FF' : '#EF4444';
+      const by = -14 + hover;
+
+      ctx.save();
+      ctx.rotate(tilt);
+
+      // Telegraph red downward targeting laser beam!
+      if (e.telegraphTimer > 0 && !e.hacked) {
+        ctx.strokeStyle = Math.floor(t * 24) % 2 === 0 ? 'rgba(239, 68, 68, 0.9)' : 'rgba(254, 240, 138, 0.92)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(10, by + 6);
+        ctx.lineTo(95, by + 34);
+        ctx.stroke();
+      }
+
+      // 4 carbon-fiber outrigger quadcopter arms + motor pods + spinning crimson-edged rotors
+      const arms = [
+        { ax: -17, ay: by - 4, back: true },
+        { ax: 17, ay: by - 4, back: true },
+        { ax: -13, ay: by + 1, back: false },
+        { ax: 13, ay: by + 1, back: false },
+      ];
+      for (const arm of arms) {
+        drawTaperedLimb(ctx, 0, by, arm.ax, arm.ay, 2.1, 1.5, c('#1E293B'), '#475569', INK, 0.95);
+        drawRoundedRect(ctx, arm.ax - 2.2, arm.ay - 3.6, 4.4, 4.2, 1.0, c('#334155'), INK, 0.9);
+        // Spinning rotor blur disc
+        ctx.fillStyle = e.hacked ? 'rgba(0, 229, 255, 0.36)' : 'rgba(248, 113, 113, 0.36)';
+        ctx.beginPath();
+        ctx.ellipse(arm.ax, arm.ay - 4.6, 9.5 + pulse * 1.4, 1.8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#F8FAFC';
+        ctx.lineWidth = 1.0;
+        const bSpan = 8.5 * Math.cos(t * 42 + arm.ax);
+        ctx.beginPath();
+        ctx.moveTo(arm.ax - bSpan, arm.ay - 4.6);
+        ctx.lineTo(arm.ax + bSpan, arm.ay - 4.6);
+        ctx.stroke();
+      }
+
+      // Stealth angular armored quadcopter fuselage chassis
+      drawRoundedPoly(
+        ctx,
+        [
+          [-10, by - 2],
+          [-5, by - 6.5],
+          [7, by - 6.0],
+          [12, by - 1],
+          [8, by + 4.5],
+          [-8, by + 4.5],
+        ],
+        c('#111827'),
+        INK,
+        1.25
+      );
+      // Crimson hazard racing stripe along hull
+      px(ctx, -6, by - 3.6, 12, 2.0, tint);
+      // Menacing glowing optical sensor eye
+      drawInkEllipse(ctx, 6.8, by + 0.2, 3.6, 2.6, 0, tint, '#FEF08A', sh(tint), 0.9);
+      // Flashing strobe beacon on top
+      if (Math.floor(t * 10) % 2 === 0) {
+        px(ctx, -2, by - 8.5, 3, 2.2, e.hacked ? '#00E5FF' : '#FACC15');
+      }
+      // Underslung gimbal plasma blaster
+      drawRoundedRect(ctx, -1, by + 4.2, 12, 3.4, 0.8, '#475569', INK, 0.95);
+      if (e.telegraphTimer > 0) {
+        drawInkEllipse(ctx, 12, by + 5.8, 2.8, 2.8, 0, '#FEF08A', '#FFFFFF', '#EF4444', 0.6);
+      }
+
+      ctx.restore();
       break;
     }
 

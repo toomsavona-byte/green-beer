@@ -4,6 +4,7 @@ import {
   LevelId,
   OnlineRole,
   OnlineRoomSnapshot,
+  PickupKind,
   PublicRoomInfo,
   RemoteInputState,
   StageClearSummary,
@@ -72,7 +73,7 @@ export interface NetFramePayload {
     timer: number;
   }>;
   pickups: Array<{
-    kind: 'beer' | 'beer_bottle' | 'weapon';
+    kind: PickupKind;
     x: number;
     y: number;
     weaponId?: string;
