@@ -61,7 +61,7 @@ if (!manifest.includes('android:networkSecurityConfig=')) {
 fs.writeFileSync(manifestPath, manifest, 'utf8');
 console.log('✓ AndroidManifest.xml locked to sensorLandscape + cleartext WS & networkSecurityConfig enabled');
 
-// 2. Patch MainActivity.java for immersive sticky fullscreen & keep screen awake
+// 2. Patch MainActivity.java for immersive sticky fullscreen, keep screen awake & instant menu audio autoplay
 const mainActPath = path.join(
   androidRoot,
   'app/src/main/java/com/greenbeer/pizedes/MainActivity.java'
@@ -72,6 +72,8 @@ if (fs.existsSync(mainActPath)) {
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowManager;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -82,6 +84,20 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        enableMediaAutoplay();
+        hideSystemBars();
+    }
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        enableMediaAutoplay();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        enableMediaAutoplay();
         hideSystemBars();
     }
 
@@ -90,6 +106,16 @@ public class MainActivity extends BridgeActivity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             hideSystemBars();
+        }
+    }
+
+    private void enableMediaAutoplay() {
+        if (getBridge() != null) {
+            WebView webView = getBridge().getWebView();
+            if (webView != null) {
+                WebSettings settings = webView.getSettings();
+                settings.setMediaPlaybackRequiresUserGesture(false);
+            }
         }
     }
 
@@ -116,7 +142,7 @@ public class MainActivity extends BridgeActivity {
 }
 `;
   fs.writeFileSync(mainActPath, immersiveJava, 'utf8');
-  console.log('✓ MainActivity.java patched for immersive fullscreen + keep screen on');
+  console.log('✓ MainActivity.java patched for immersive fullscreen, keep screen on & media autoplay');
 }
 
 // 3. Copy generated GREEN BEER PIZEDES PNG icons into Android mipmap densities

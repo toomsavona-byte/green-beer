@@ -66,7 +66,9 @@ class SoundEngine {
       this.sfxGain = this.ctx.createGain();
 
       this.musicDrive = this.ctx.createWaveShaper();
-      this.musicDrive.curve = makeTanhCurve(2.2);
+      const activeDrive =
+        this.currentTrack !== 'none' ? TRACKS[this.currentTrack].drive ?? 1.7 : 2.2;
+      this.musicDrive.curve = makeTanhCurve(activeDrive);
       this.musicDrive.oversample = 'none';
 
       this.masterLimiter = this.ctx.createWaveShaper();
@@ -89,6 +91,10 @@ class SoundEngine {
     if (this.ctx && this.ctx.state !== 'running') {
       this.ctx.resume().catch(() => {});
     }
+  }
+
+  public isRunning(): boolean {
+    return Boolean(this.ctx && this.ctx.state === 'running');
   }
 
   private createNoiseBuffer(ctx: AudioContext): AudioBuffer {
@@ -123,14 +129,16 @@ class SoundEngine {
 
   public playMusic(track: MusicTrack): void {
     if (this.currentTrack === track && this.schedulerTimer !== null) {
-      if (this.ctx && this.ctx.state !== 'running') {
-        this.ctx.resume().catch(() => {});
+      if (track !== 'none') {
+        this.unlock();
       }
       return;
     }
     this.stopMusic();
     this.currentTrack = track;
     if (track === 'none') return;
+
+    this.unlock();
 
     const pattern = TRACKS[track];
     if (this.musicDrive) {
@@ -1011,11 +1019,11 @@ class SoundEngine {
         this.playTone(330, 215, 0.12, 'sawtooth', 0.18, 0.02);
         break;
       case 'vano':
-        // Fast flexible fishing rod whip-swish + spinning reel click!
-        this.playNoise(0.13, 2400, 'bandpass', 0.26);
-        this.playTone(380, 1980, 0.068, 'sine', 0.16, 0);
-        this.playTone(1980, 520, 0.095, 'triangle', 0.16, 0.058);
-        this.playTone(2850, 1550, 0.032, 'square', 0.11, 0.085);
+        // Big heavy glass beer bottle BONK + ringing glass clink!
+        this.playTone(320, 140, 0.11, 'triangle', 0.28, 0.015);
+        this.playTone(1680, 1615, 0.17, 'sine', 0.19, 0.02);
+        this.playTone(2540, 2410, 0.13, 'triangle', 0.13, 0.025);
+        this.playNoise(0.08, 3200, 'highpass', 0.19);
         break;
       case 'hooper':
         // Punchy rock snare / tom drum smash + snare wire rattle!

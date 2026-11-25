@@ -640,8 +640,8 @@ export function drawHeroSprite(ctx: CanvasRenderingContext2D, o: HeroRenderOpts)
   ctx.save();
   ctx.translate(0, hipCenterY);
   ctx.rotate(torsoLean);
-  if (o.heroId === 'vano' && o.meleeTimer <= 0) {
-    // Sleek harpoon fishing rod strapped diagonally behind back (hidden while swinging it!)
+  if (o.heroId === 'vano') {
+    // Sleek harpoon fishing rod strapped diagonally behind back
     drawTaperedLimb(ctx, -9, -22, 4, -2, 1.2, 1.4, '#CBD5E1', '#F8FAFC', '#475569', 0.9);
     drawInkEllipse(ctx, -8.5, -22.5, 2.8, 1.8, -0.5, '#0EA5E9', '#7DD3FC', '#0369A1', 0.9);
     drawInkEllipse(ctx, -3, -9, 2.2, 2.0, 0, '#F59E0B', '#FEF08A', '#92400E', 0.9);
@@ -2013,26 +2013,42 @@ function drawHeroMeleeWeapon(
       break;
     }
     case 'vano': {
-      // Long flexing cobalt fishing rod with big spinning reel & whipping lure!
-      tipX = 36;
-      impactColor = '#38BDF8';
-      // Cork handle + large gleaming blue spinning reel
-      drawRoundedRect(ctx, -3, -2.6, 8.5, 5.2, 1.1, '#D97706', INK, 1.15);
-      drawInkEllipse(ctx, 4.8, 4.8, 3.8, 3.3, 0, '#0284C7', '#7DD3FC', '#0C4A6E', 1.15);
-      // Long curved flexing graphite rod blank!
-      drawTaperedLimb(ctx, 5.5, 0, 36.5, -3.0, 2.3, 0.9, '#0EA5E9', '#E0F2FE', '#0369A1', 1.2);
-      // Gleaming metallic line guides
-      px(ctx, 13, 1.6, 1.8, 2.2, '#F8FAFC');
-      px(ctx, 22, 0.8, 1.6, 2.0, '#F8FAFC');
-      px(ctx, 30, -0.6, 1.4, 1.8, '#F8FAFC');
-      // Whipping fishing line & bright yellow/silver fish lure at tip
-      ctx.strokeStyle = '#E0F2FE';
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.moveTo(36.5, -3.0);
-      ctx.quadraticCurveTo(40.5, 3.2, 34.5, 9.2);
-      ctx.stroke();
-      drawInkEllipse(ctx, 34.5, 9.6, 2.8, 2.0, 0.3, '#FACC15', '#FFFFFF', '#92400E', 0.95);
+      // HUGE chunky amber glass beer bottle gripped by the neck!
+      tipX = 32;
+      impactColor = '#FACC15';
+      // Gold crown bottle cap sticking out behind fist
+      drawRoundedRect(ctx, -5.5, -2.9, 3.2, 5.8, 0.7, '#FACC15', INK, 1.0);
+      px(ctx, -4.6, -2.0, 1.2, 3.8, '#FEF9C3');
+      // Tapered glass bottle neck gripped in hand
+      drawRoundedRect(ctx, -2.8, -2.5, 11.5, 5.0, 1.0, '#B45309', INK, 1.2);
+      px(ctx, -1.5, -1.6, 8.5, 1.3, '#FDE047');
+      // Rounded bottle shoulder transitioning into big heavy bottle body
+      drawRoundedPoly(
+        ctx,
+        [
+          [7.5, -2.6],
+          [13.5, -6.4],
+          [30.5, -6.4],
+          [32.5, -4.6],
+          [32.5, 4.6],
+          [30.5, 6.4],
+          [13.5, 6.4],
+          [7.5, 2.6],
+        ],
+        '#92400E',
+        INK,
+        1.35
+      );
+      // Warm amber glowing beer glass highlight along top edge
+      px(ctx, 13.5, -5.0, 16.5, 2.2, '#F59E0B');
+      px(ctx, 14.5, -4.6, 14.0, 1.1, '#FEF08A');
+      // Deep dark-amber glass base shadow along bottom edge
+      px(ctx, 13.5, 3.2, 16.5, 2.0, '#451A03');
+      // Crisp cream & gold beer label wrapped around the middle of the bottle!
+      drawRoundedRect(ctx, 16.5, -5.6, 9.5, 11.2, 1.0, '#FEF3C7', INK, 0.95);
+      px(ctx, 18.2, -3.6, 6.2, 2.2, '#D97706');
+      px(ctx, 18.8, 0.2, 5.0, 2.0, '#16A34A');
+      px(ctx, 17.5, -4.8, 1.4, 9.4, '#FFFFFF');
       break;
     }
     case 'hooper': {

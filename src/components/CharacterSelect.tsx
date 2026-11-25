@@ -234,7 +234,13 @@ export function CharacterSelect({
     },
   });
 
-  const renderStatBar = (label: string, val: number, accent: string, compact = false) => (
+  const renderStatBar = (
+    label: string,
+    val: number,
+    accent: string,
+    compact = false,
+    valueText?: string
+  ) => (
     <div
       key={label}
       className={`flex items-center gap-1.5 font-mono-num ${compact ? 'text-[10px]' : 'text-xs gap-2'}`}
@@ -249,7 +255,9 @@ export function CharacterSelect({
           />
         ))}
       </div>
-      <span className={`${compact ? 'w-5' : 'w-6'} text-right text-[#E6EDF3]`}>{val}/5</span>
+      <span className={`${compact ? 'w-6' : 'w-7'} text-right text-[#E6EDF3]`}>
+        {valueText ?? `${val}/5`}
+      </span>
     </div>
   );
 
@@ -286,7 +294,7 @@ export function CharacterSelect({
             />
           </div>
 
-          {/* Bio + Weapon */}
+          {/* Bio + Weapon + Melee Attack */}
           <div className="flex-1 min-w-0 flex flex-col gap-0.5 sm:gap-1">
             <div className="flex items-center gap-2 text-[10px] sm:text-xs font-mono-num">
               <span className="font-bold" style={{ color: slotColor }}>
@@ -304,6 +312,11 @@ export function CharacterSelect({
             <p className="text-[11px] sm:text-xs text-[#CBD5E1] leading-snug line-clamp-2">{hero.bio}</p>
             <div className="text-[10px] sm:text-xs font-mono-num text-[#FFB000] truncate mt-0.5">
               РОДНОЕ (+10%): {weapon.name}
+            </div>
+            <div className="text-[10px] sm:text-xs font-mono-num text-[#38BDF8] truncate">
+              БЛИЖНИЙ БОЙ: <span className="text-white font-bold">{hero.melee.weapon}</span> · УДАР{' '}
+              <span className="text-[#39FF14] font-bold">{hero.melee.damage}</span>
+              <span className="text-[#94A3B8] hidden sm:inline"> — {hero.melee.description}</span>
             </div>
           </div>
 
@@ -331,7 +344,7 @@ export function CharacterSelect({
             {renderStatBar('Скор.', hero.stats.speed, slotColor, true)}
             {renderStatBar('Урон', hero.stats.damage, slotColor, true)}
             {renderStatBar('Стойк.', hero.stats.hp, slotColor, true)}
-            {renderStatBar('Темп', hero.stats.fireRate, slotColor, true)}
+            {renderStatBar('Удар', hero.melee.powerRating, '#38BDF8', true, `${hero.melee.damage}`)}
           </div>
           <button
             type="button"
@@ -350,12 +363,15 @@ export function CharacterSelect({
           </button>
         </div>
 
-        {/* 5 Stat Bars on Desktop */}
-        <div className="w-44 shrink-0 hidden xl:flex flex-col gap-1 pl-3 border-l border-[#1E293B]">
+        {/* Stat Bars on Desktop (including Melee Strike Power) */}
+        <div
+          className={`w-48 shrink-0 hidden ${players === 1 ? 'lg:flex' : 'xl:flex'} flex-col gap-1 pl-3 border-l border-[#1E293B]`}
+        >
           {renderStatBar('Скорость', hero.stats.speed, slotColor)}
           {renderStatBar('Стойкость', hero.stats.hp, slotColor)}
           {renderStatBar('Урон', hero.stats.damage, slotColor)}
           {renderStatBar('Темп', hero.stats.fireRate, slotColor)}
+          {renderStatBar('Сила удара', hero.melee.powerRating, '#38BDF8', false, `${hero.melee.damage}`)}
           {renderStatBar(hero.stats.specialLabel, hero.stats.specialValue, '#FFB000')}
         </div>
       </div>

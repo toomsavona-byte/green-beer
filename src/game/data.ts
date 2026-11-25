@@ -65,6 +65,12 @@ export const HEROES: HeroDef[] = [
     role: 'Танк-саппорт · Стабильный урон',
     bio: 'Крепкий мужик 40+, потёртая кожанка, перчатки механика и ключи от фургона. Знает каждый объезд и держит удар за всю команду.',
     nativeWeaponId: 'chaindog',
+    melee: {
+      weapon: 'Автомобильное колесо',
+      description: 'тяжёлый замах колесом с плеча',
+      damage: 28,
+      powerRating: 3,
+    },
     stats: {
       speed: 3,
       hp: 5,
@@ -94,6 +100,12 @@ export const HEROES: HeroDef[] = [
     role: 'Быстрый дамагер · Мобильность',
     bio: 'Футбольная форма поверх гидрокостюма, бутсы, рыбацкая бандана и удочка-гарпун за спиной. Самый шустрый боец отряда.',
     nativeWeaponId: 'spinning',
+    melee: {
+      weapon: 'Большая бутылка пива',
+      description: 'звонкий удар с плеча стеклянной бутылкой',
+      damage: 28,
+      powerRating: 3,
+    },
     stats: {
       speed: 5,
       hp: 3,
@@ -123,6 +135,12 @@ export const HEROES: HeroDef[] = [
     role: 'Зонный урон · Стеклянная пушка',
     bio: 'Худощавый технарь в очках-гогглах, жилет с карманами и ранец с взрывной RC-машинкой. Сносит толпы с дистанции.',
     nativeWeaponId: 'rc_launcher',
+    melee: {
+      weapon: 'Гигантский мухомор',
+      description: 'размашистый шлепок большим грибом',
+      damage: 32,
+      powerRating: 4,
+    },
     stats: {
       speed: 3,
       hp: 2,
@@ -152,6 +170,12 @@ export const HEROES: HeroDef[] = [
     role: 'Нарастающий ДПС при удержании огня',
     bio: 'Наушники-«уши», кепка козырьком назад, футболка с пиксельным сердцем, барабанные палочки за поясом и картридж Dendy на шее.',
     nativeWeaponId: 'blast_beat',
+    melee: {
+      weapon: 'Рабочий барабан',
+      description: 'громовой удар барабаном с плеча',
+      damage: 28,
+      powerRating: 3,
+    },
     stats: {
       speed: 4,
       hp: 3,
@@ -181,6 +205,12 @@ export const HEROES: HeroDef[] = [
     role: 'Универсал · Пробивной урон',
     bio: 'Делает элитную дизайнерскую мебель из массива дуба и рубит тяжёлый бас. Кожаный жилет, кольцо в ухе и железный удар.',
     nativeWeaponId: 'bass_beam',
+    melee: {
+      weapon: 'Бас-гитара',
+      description: 'мощный тяжеловесный удар гитарой, сильно отбрасывает',
+      damage: 36,
+      powerRating: 4,
+    },
     stats: {
       speed: 4,
       hp: 4,
@@ -210,6 +240,12 @@ export const HEROES: HeroDef[] = [
     role: 'Танк ближнего боя · Контроль толпы',
     bio: 'Крупный заводчанин в спецовке с перечёркнутым логотипом «Зелёный Поток», каске, страйкбольной маске и шипованных перчатках.',
     nativeWeaponId: 'domna',
+    melee: {
+      weapon: 'Стальная труба',
+      description: 'сокрушительный удар трубой, макс. дальность и отбрасывание',
+      damage: 46,
+      powerRating: 5,
+    },
     stats: {
       speed: 2,
       hp: 5,
@@ -239,6 +275,12 @@ export const HEROES: HeroDef[] = [
     role: 'Техподдержка · Оглушение и взлом',
     bio: 'Лысый айтишник в очках, худи с ноутбуком-ранцем и светящимися браслетами. Перехватывает заводские турели и дронов.',
     nativeWeaponId: 'firewall',
+    melee: {
+      weapon: 'RGB-клавиатура',
+      description: 'резкий удар механикой с разлётом клавиш',
+      damage: 28,
+      powerRating: 3,
+    },
     stats: {
       speed: 4,
       hp: 2,
@@ -268,6 +310,12 @@ export const HEROES: HeroDef[] = [
     role: 'Зонный контроль · Дымовая завеса',
     bio: 'Крупный хакер в круглых очках, гавайке поверх худи, сланцах и с кальяном на шее. Шутит с [пик] и накрывает арену дымом.',
     nativeWeaponId: 'dymok',
+    melee: {
+      weapon: 'Кальян',
+      description: 'увесистый удар шахтой кальяна с плеча',
+      damage: 30,
+      powerRating: 3,
+    },
     stats: {
       speed: 2,
       hp: 5,

@@ -59,6 +59,8 @@ interface SimPlayer {
   shootCd: number;
   meleeCd: number;
   boostCd: number;
+  jumpBuffer: number;
+  meleeBuffer: number;
   meleeTimer: number;
   shootTimer: number;
   hurtTimer: number;
@@ -392,7 +394,7 @@ export class GameEngine {
       return;
     }
 
-    if (!this.heldKeys.has(e.code)) {
+    if (!this.heldKeys.has(e.code) || !e.repeat) {
       this.justPressedKeys.add(e.code);
     }
     this.heldKeys.add(e.code);
@@ -423,9 +425,7 @@ export class GameEngine {
 
   public setVirtualButton(action: VirtualButtonAction, pressed: boolean): void {
     if (pressed) {
-      if (!this.virtualHeld.has(action)) {
-        this.virtualJustPressed.add(action);
-      }
+      this.virtualJustPressed.add(action);
       this.virtualHeld.add(action);
     } else {
       this.virtualHeld.delete(action);
@@ -691,6 +691,8 @@ export class GameEngine {
       shootCd: 0,
       meleeCd: 0,
       boostCd: 0,
+      jumpBuffer: 0,
+      meleeBuffer: 0,
       meleeTimer: 0,
       shootTimer: 0,
       hurtTimer: 0,
@@ -723,6 +725,8 @@ export class GameEngine {
       p.y = isFlight ? (idx === 0 ? 116 : 162) : idx === 0 ? 188 : 226;
       p.z = isFlight ? 0 : 70;
       p.vz = 0;
+      p.jumpBuffer = 0;
+      p.meleeBuffer = 0;
       p.invulnTimer = 2.8;
       p.hurtTimer = 0;
     });
@@ -751,12 +755,13 @@ export class GameEngine {
       this.lastTimestamp = now;
       const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
 
+      let consumeActionEdges = true;
       try {
         this.pollGamepadPause();
         if (this.onlineMode === 'guest') {
           this.updateGuestClient(dt);
         } else if (!this.paused) {
-          this.update(dt);
+          consumeActionEdges = this.update(dt);
           if (this.onlineMode === 'host') {
             this.netFrameTimer += dt;
             // ~22 Hz compact snapshots + backpressure guard: skip building/sending if socket buffer is backed up
@@ -776,9 +781,14 @@ export class GameEngine {
         // Guard against any unexpected simulation error freezing the RAF loop
         console.error('GameEngine frame error:', err);
       } finally {
-        this.justPressedKeys.clear();
-        this.virtualJustPressed.clear();
-        this.snapshotGamepadButtons();
+        if (consumeActionEdges) {
+          this.justPressedKeys.clear();
+          this.virtualJustPressed.clear();
+          this.snapshotGamepadButtons(false);
+        } else {
+          // Preserve jump/melee/swap edge presses across hitstop freeze frames; only update pause state
+          this.snapshotGamepadButtons(true);
+        }
         if (this.running) {
           this.rafId = requestAnimationFrame(tick);
         }
@@ -889,7 +899,7 @@ export class GameEngine {
     this.projectiles = this.projectiles.filter((p) => !p.dead);
   }
 
-  private update(dt: number): void {
+  private update(dt: number): boolean {
     this.simTime += dt;
 
     if (this.announcementTimer > 0) {
@@ -904,7 +914,7 @@ export class GameEngine {
 
     if (this.hitstopTimer > 0) {
       this.hitstopTimer -= dt;
-      return;
+      return false;
     }
 
     // Contra Hard Corps chained boss explosion sequence before Stage Clear!
@@ -936,7 +946,7 @@ export class GameEngine {
           continuesLeft: this.continuesLeft,
         });
       }
-      return;
+      return true;
     }
 
     // Flight auto-scroll over city rooftops toward the factory substation
@@ -1307,6 +1317,7 @@ export class GameEngine {
       this.hudEmitTimer = 0;
       this.emitHud();
     }
+    return true;
   }
 
   private getConnectedPads(): Gamepad[] {
@@ -1343,15 +1354,23 @@ export class GameEngine {
     }
   }
 
-  private snapshotGamepadButtons(): void {
+  private snapshotGamepadButtons(pauseOnly = false): void {
     const pads = this.getConnectedPads();
+    const pauseBinding = this.controls.gamepad.pause;
+    const pauseKey = getGamepadBindingKey(pauseBinding);
     const gpBindings = Object.values(this.controls.gamepad);
     for (const pad of pads) {
-      const state: Record<string, boolean> = {};
-      for (const b of gpBindings) {
-        state[getGamepadBindingKey(b)] = isGamepadBindingActive(pad, b);
+      if (pauseOnly) {
+        const prev = this.prevPadBindings[pad.index] ?? {};
+        prev[pauseKey] = isGamepadBindingActive(pad, pauseBinding);
+        this.prevPadBindings[pad.index] = prev;
+      } else {
+        const state: Record<string, boolean> = {};
+        for (const b of gpBindings) {
+          state[getGamepadBindingKey(b)] = isGamepadBindingActive(pad, b);
+        }
+        this.prevPadBindings[pad.index] = state;
       }
-      this.prevPadBindings[pad.index] = state;
     }
   }
 
@@ -1450,7 +1469,9 @@ export class GameEngine {
     const padLeft = isGamepadBindingActive(pad, gp.left) || padAxisX < -0.28;
     const padRight = isGamepadBindingActive(pad, gp.right) || padAxisX > 0.28;
     const padJump = this.isPadBindingJustPressed(pad, gp.jump);
+    const padJumpHeld = isGamepadBindingActive(pad, gp.jump);
     const padMelee = this.isPadBindingJustPressed(pad, gp.melee);
+    const padMeleeHeld = isGamepadBindingActive(pad, gp.melee);
     const padShoot = isGamepadBindingActive(pad, gp.shoot);
     const padSwap = this.isPadBindingJustPressed(pad, gp.swap);
 
@@ -1465,7 +1486,9 @@ export class GameEngine {
       analogX: vx !== 0 ? vx : padAxisX,
       analogY: vy !== 0 ? vy : padAxisY,
       melee: this.justPressedKeys.has(p1.melee) || this.virtualJustPressed.has('melee') || padMelee,
+      meleeHeld: this.heldKeys.has(p1.melee) || this.virtualHeld.has('melee') || padMeleeHeld,
       jump: this.justPressedKeys.has(p1.jump) || this.virtualJustPressed.has('jump') || padJump,
+      jumpHeld: this.heldKeys.has(p1.jump) || this.virtualHeld.has('jump') || padJumpHeld,
       shoot: this.heldKeys.has(p1.shoot) || this.virtualHeld.has('shoot') || padShoot,
       swap: this.justPressedKeys.has(p1.swap) || this.virtualJustPressed.has('swap') || padSwap,
     };
@@ -1495,7 +1518,9 @@ export class GameEngine {
         analogX: cur.analogX,
         analogY: cur.analogY,
         melee,
+        meleeHeld: cur.melee,
         jump,
+        jumpHeld: cur.jump,
         shoot: cur.shoot,
         swap,
       };
@@ -1513,7 +1538,9 @@ export class GameEngine {
     const padLeft = isGamepadBindingActive(pad, gp.left) || padAxisX < -0.28;
     const padRight = isGamepadBindingActive(pad, gp.right) || padAxisX > 0.28;
     const padJump = this.isPadBindingJustPressed(pad, gp.jump);
+    const padJumpHeld = isGamepadBindingActive(pad, gp.jump);
     const padMelee = this.isPadBindingJustPressed(pad, gp.melee);
+    const padMeleeHeld = isGamepadBindingActive(pad, gp.melee);
     const padShoot = isGamepadBindingActive(pad, gp.shoot);
     const padSwap = this.isPadBindingJustPressed(pad, gp.swap);
 
@@ -1528,10 +1555,18 @@ export class GameEngine {
         this.justPressedKeys.has(p2.melee) ||
         (p2.melee === 'Numpad1' && this.justPressedKeys.has('Semicolon')) ||
         padMelee,
+      meleeHeld:
+        this.heldKeys.has(p2.melee) ||
+        (p2.melee === 'Numpad1' && this.heldKeys.has('Semicolon')) ||
+        padMeleeHeld,
       jump:
         this.justPressedKeys.has(p2.jump) ||
         (p2.jump === 'Numpad2' && this.justPressedKeys.has('Quote')) ||
         padJump,
+      jumpHeld:
+        this.heldKeys.has(p2.jump) ||
+        (p2.jump === 'Numpad2' && this.heldKeys.has('Quote')) ||
+        padJumpHeld,
       shoot:
         this.heldKeys.has(p2.shoot) ||
         (p2.shoot === 'Numpad3' && this.heldKeys.has('Slash')) ||
@@ -1612,13 +1647,14 @@ export class GameEngine {
     if (isFlight) {
       p.z = 0;
       p.vz = 0;
+      p.jumpBuffer = 0;
     } else {
-      if (ctrl.jump && p.z <= 0.1) {
-        p.vz = p.heroId === 'vano' ? 245 : 215;
-        soundEngine.playJump();
-        this.queueSfx('jump');
-        this.spawnParticles(p.x, p.y, 0, '#94A3B8', 5, 45);
+      if (p.jumpBuffer > 0) p.jumpBuffer = Math.max(0, p.jumpBuffer - dt);
+      if (ctrl.jump) {
+        p.jumpBuffer = 0.24;
       }
+
+      // Advance vertical jump physics & landing FIRST so landing-frame & buffered jumps never drop
       if (p.z > 0 || p.vz > 0) {
         p.z += p.vz * dt;
         p.vz -= 640 * dt;
@@ -1626,6 +1662,16 @@ export class GameEngine {
           p.z = 0;
           p.vz = 0;
         }
+      }
+
+      if ((p.jumpBuffer > 0 || ctrl.jumpHeld) && p.z <= 0.1) {
+        p.vz = p.heroId === 'vano' ? 245 : 215;
+        p.z = Math.max(0.5, p.vz * dt);
+        p.vz -= 640 * dt;
+        p.jumpBuffer = 0;
+        soundEngine.playJump();
+        this.queueSfx('jump');
+        this.spawnParticles(p.x, p.y, 0, '#94A3B8', 5, 45);
       }
     }
 
@@ -1670,7 +1716,12 @@ export class GameEngine {
     }
 
     // Melee Attack (or Heavy Micro-Rocket Burst on Unmanned Quadcopter!)
-    if (ctrl.melee && p.meleeCd <= 0) {
+    if (p.meleeBuffer > 0) p.meleeBuffer = Math.max(0, p.meleeBuffer - dt);
+    if (ctrl.melee) {
+      p.meleeBuffer = 0.24;
+    }
+    if ((p.meleeBuffer > 0 || ctrl.meleeHeld) && p.meleeCd <= 0) {
+      p.meleeBuffer = 0;
       if (isFlight) {
         p.meleeCd = 0.56;
         p.meleeTimer = 0.18;
@@ -1707,7 +1758,7 @@ export class GameEngine {
         p.meleeTimer = isHeavyMelee ? 0.32 : 0.28;
         soundEngine.playHeroMelee(p.heroId);
         this.queueSfx('hero_melee', p.heroId);
-        const meleeDmg = (p.heroId === 'zavod_killer' ? 36 : p.heroId === 'sandro' ? 28 : 22) + hero.stats.damage * 2;
+        const meleeDmg = hero.melee.damage;
         const reach = p.heroId === 'zavod_killer' ? 52 : 44;
 
         const strikeDir = isHighway && p.aimX < -0.2 ? -1 : p.facing;
@@ -2903,6 +2954,8 @@ export class GameEngine {
         p.armorPips = p.maxArmorPips;
         p.z = 85;
         p.vz = 0;
+        p.jumpBuffer = 0;
+        p.meleeBuffer = 0;
         p.invulnTimer = 2.6;
         this.addFloatingText(p.x, p.y - 50, `ЖИЗНЕЙ: ${p.lives}`, '#FFB000');
         this.enemies.forEach((en) => {

@@ -86,6 +86,13 @@ export interface HeroPalette {
   bikeAccent: string;
 }
 
+export interface HeroMeleeInfo {
+  weapon: string;
+  description: string;
+  damage: number;
+  powerRating: number; // 1..5
+}
+
 export interface HeroDef {
   id: HeroId;
   name: string;
@@ -93,6 +100,7 @@ export interface HeroDef {
   role: string;
   bio: string;
   nativeWeaponId: WeaponId;
+  melee: HeroMeleeInfo;
   stats: HeroStats;
   bodyWidth: 'lean' | 'athletic' | 'stocky' | 'heavy';
   palette: HeroPalette;

@@ -217,25 +217,58 @@ export default function App() {
     }
   }, []);
 
-  // Global first-gesture audio unlock + automatic landscape lock attempt in installed PWA
+  // Immediate audio startup (works right away on Android APK WebView) + gesture/focus fallback for browsers
   useEffect(() => {
-    const unlockOnce = () => {
-      soundEngine.unlock();
-      const isStandalone =
-        window.matchMedia('(display-mode: standalone)').matches ||
-        window.matchMedia('(display-mode: fullscreen)').matches;
-      if (isStandalone && platformRef.current.isTouchDevice) {
-        const orientation = window.screen.orientation as ScreenOrientation & {
-          lock?: (o: string) => Promise<void>;
-        };
-        orientation?.lock?.('landscape').catch(() => {});
+    let lockedLandscapeOnce = false;
+
+    const tryUnlockAudio = () => {
+      if (!soundEngine.isRunning()) {
+        soundEngine.unlock();
       }
     };
-    window.addEventListener('pointerdown', unlockOnce, { once: true });
-    window.addEventListener('keydown', unlockOnce, { once: true });
+
+    const onUserGesture = () => {
+      tryUnlockAudio();
+      if (!lockedLandscapeOnce) {
+        lockedLandscapeOnce = true;
+        const isStandalone =
+          window.matchMedia('(display-mode: standalone)').matches ||
+          window.matchMedia('(display-mode: fullscreen)').matches;
+        if (isStandalone && platformRef.current.isTouchDevice) {
+          const orientation = window.screen.orientation as ScreenOrientation & {
+            lock?: (o: string) => Promise<void>;
+          };
+          orientation?.lock?.('landscape').catch(() => {});
+        }
+      }
+    };
+
+    const onVisibilityOrFocus = () => {
+      if (!document.hidden) {
+        tryUnlockAudio();
+      }
+    };
+
+    // Attempt immediate autoplay on load + brief retries in case Android WebView finishes initializing a tick later
+    tryUnlockAudio();
+    const retry1 = window.setTimeout(tryUnlockAudio, 150);
+    const retry2 = window.setTimeout(tryUnlockAudio, 600);
+
+    window.addEventListener('pointerdown', onUserGesture, { passive: true });
+    window.addEventListener('touchstart', onUserGesture, { passive: true });
+    window.addEventListener('keydown', onUserGesture);
+    window.addEventListener('focus', onVisibilityOrFocus);
+    window.addEventListener('pageshow', onVisibilityOrFocus);
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
     return () => {
-      window.removeEventListener('pointerdown', unlockOnce);
-      window.removeEventListener('keydown', unlockOnce);
+      window.clearTimeout(retry1);
+      window.clearTimeout(retry2);
+      window.removeEventListener('pointerdown', onUserGesture);
+      window.removeEventListener('touchstart', onUserGesture);
+      window.removeEventListener('keydown', onUserGesture);
+      window.removeEventListener('focus', onVisibilityOrFocus);
+      window.removeEventListener('pageshow', onVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
     };
   }, []);
 

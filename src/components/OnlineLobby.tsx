@@ -627,6 +627,9 @@ export function OnlineLobby({
                     <div className="text-xs font-mono-num text-[#94A3B8] truncate">
                       {WEAPON_MAP[HERO_MAP[room.hostHero].nativeWeaponId].name} (+10%)
                     </div>
+                    <div className="text-[11px] font-mono-num text-[#38BDF8] truncate">
+                      Ближний: {HERO_MAP[room.hostHero].melee.weapon} · удар {HERO_MAP[room.hostHero].melee.damage}
+                    </div>
                   </div>
                 </div>
 
@@ -661,6 +664,9 @@ export function OnlineLobby({
                         </div>
                         <div className="text-xs font-mono-num text-[#94A3B8] truncate">
                           {WEAPON_MAP[HERO_MAP[room.guestHero].nativeWeaponId].name} (+10%)
+                        </div>
+                        <div className="text-[11px] font-mono-num text-[#38BDF8] truncate">
+                          Ближний: {HERO_MAP[room.guestHero].melee.weapon} · удар {HERO_MAP[room.guestHero].melee.damage}
                         </div>
                       </div>
                     </>
