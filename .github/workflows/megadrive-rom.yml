@@ -1,0 +1,47 @@
+name: Build Sega Mega Drive ROM
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'megadrive/**'
+      - 'scripts/export-md-assets.mjs'
+      - 'scripts/export-md-vgm.mjs'
+      - '.github/workflows/megadrive-rom.yml'
+  workflow_dispatch:
+
+jobs:
+  build-rom:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Generate 4bpp Mega Drive PNG sprites, YM2612 VGM music & PCM SFX
+        run: |
+          node scripts/export-md-assets.mjs
+          node scripts/export-md-vgm.mjs
+
+      - name: Compile Sega Mega Drive 16-bit ROM with official SGDK container
+        run: |
+          docker run --rm --user $(id -u):$(id -g) \
+            -v "${{ github.workspace }}/megadrive:/src" \
+            ghcr.io/stephane-d/sgdk:latest \
+            make -f /sgdk/makefile.gen
+
+      - name: Copy ROM binary for download
+        run: cp megadrive/out/rom.bin green-beer-pizedes-md.bin
+
+      - name: Upload Sega Mega Drive ROM artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: green-beer-pizedes-megadrive-rom
+          path: green-beer-pizedes-md.bin
+          retention-days: 30

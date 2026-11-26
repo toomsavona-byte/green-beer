@@ -9,4 +9,6 @@ coverage/
 android/
 *.apk
 data/
+megadrive/out/
+green-beer-pizedes-md.bin
 
