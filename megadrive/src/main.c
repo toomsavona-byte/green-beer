@@ -233,7 +233,7 @@ static void spawnBurst(s32 x, s32 y, s32 z) {
             gFx[i].spr = SPR_addSprite(&spr_fx, FROM_FP(x) - gCamX - 8, FROM_FP(y - z) - 8,
                                        TILE_ATTR(PAL0, TRUE, FALSE, FALSE));
             if (gFx[i].spr) {
-                SPR_setAnim(gFx[i].spr, ANIM_FX_BOOM);
+                SPR_setAnimAndFrame(gFx[i].spr, ANIM_FX_BOOM, 0);
                 SPR_setDepth(gFx[i].spr, SPR_MIN_DEPTH);
             }
             return;
@@ -254,7 +254,6 @@ static void spawnPickup(s32 x, s32 y, u8 foodFrame) {
                                             TILE_ATTR(PAL0, TRUE, FALSE, FALSE));
             if (gPickups[i].spr) {
                 SPR_setAnimAndFrame(gPickups[i].spr, ANIM_FX_PICKUP, gPickups[i].foodFrame);
-                SPR_setAutoAnimation(gPickups[i].spr, FALSE);
             }
             return;
         }
@@ -281,7 +280,6 @@ static void spawnProjectile(bool fromPlayer, u8 ownerSlot, u8 subType,
                                           TILE_ATTR(PAL0, TRUE, FALSE, FALSE));
             if (gProjs[i].spr) {
                 SPR_setAnimAndFrame(gProjs[i].spr, fromPlayer ? ANIM_FX_PSHOT : ANIM_FX_ESHOT, subType & 1);
-                SPR_setAutoAnimation(gProjs[i].spr, FALSE);
             }
             return;
         }
@@ -548,7 +546,6 @@ static void damageEnemy(Enemy *e, s16 dmg, u8 attackerSlot, s16 knockX) {
 
         if (wasBoss) {
             gState = STATE_STAGE_CLEAR;
-            XGM_stopPlay();
             XGM_startPlay(music_title);
             VDP_drawTextBG(WINDOW, "   STAGE 1 CLEAR! BOSS DEFEATED!      ", 1, 1);
             VDP_drawTextBG(WINDOW, "      PRESS START FOR TITLE MENU      ", 1, 2);
@@ -925,6 +922,9 @@ static void updatePickupsAndFx(void) {
             fx->active = FALSE;
             if (fx->spr) { SPR_releaseSprite(fx->spr); fx->spr = NULL; }
         } else if (fx->spr) {
+            u8 boomFrame = (u8)((15 - fx->timer) >> 2);
+            if (boomFrame > 3) boomFrame = 3;
+            SPR_setFrame(fx->spr, boomFrame);
             SPR_setPosition(fx->spr, FROM_FP(fx->x) - gCamX - 8, FROM_FP(fx->y - fx->z) - 8);
         }
     }
@@ -986,7 +986,6 @@ static void updateStageProgression(void) {
             spawnEnemy(ENEMY_BOSS_BARMEN, gCamX + 264, 180);
             spawnEnemy(ENEMY_DRUNK, gCamX + 296, 156);
             setBanner("BOSS: PIVNOY BARMEN!", 150);
-            XGM_stopPlay();
             XGM_startPlay(music_boss);
         }
     } else if (!gBossSpawned && countActiveEnemies() == 0) {

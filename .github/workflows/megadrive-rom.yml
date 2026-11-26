@@ -28,16 +28,37 @@ jobs:
         run: |
           node scripts/export-md-assets.mjs
           node scripts/export-md-vgm.mjs
+          mkdir -p megadrive/inc megadrive/out
 
       - name: Compile Sega Mega Drive 16-bit ROM with official SGDK container
         run: |
-          docker run --rm --user $(id -u):$(id -g) \
+          docker run --rm \
             -v "${{ github.workspace }}/megadrive:/src" \
+            -w /src \
+            --entrypoint /bin/sh \
             ghcr.io/stephane-d/sgdk:latest \
-            make -f /sgdk/makefile.gen
+            -c '
+              set -eu
+              GDK_DIR="${GDK:-/sgdk}"
+              if [ ! -f "$GDK_DIR/makefile.gen" ]; then
+                for d in /sgdk /gdk /opt/sgdk /m68k/sgdk; do
+                  if [ -f "$d/makefile.gen" ]; then
+                    GDK_DIR="$d"
+                    break
+                  fi
+                done
+              fi
+              echo "Using SGDK at: $GDK_DIR"
+              ls -la /src /src/src /src/res
+              GDK="$GDK_DIR" make -f "$GDK_DIR/makefile.gen"
+            '
+          sudo chown -R "$(id -u):$(id -g)" megadrive/out
 
       - name: Copy ROM binary for download
-        run: cp megadrive/out/rom.bin green-beer-pizedes-md.bin
+        run: |
+          test -f megadrive/out/rom.bin
+          cp megadrive/out/rom.bin green-beer-pizedes-md.bin
+          ls -lh green-beer-pizedes-md.bin
 
       - name: Upload Sega Mega Drive ROM artifact
         uses: actions/upload-artifact@v5
