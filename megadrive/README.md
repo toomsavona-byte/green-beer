@@ -31,7 +31,7 @@
 ```bash
 node scripts/export-md-assets.mjs
 node scripts/export-md-vgm.mjs
-docker run --rm -v "$PWD/megadrive:/src" -w /src --entrypoint /bin/sh ghcr.io/stephane-d/sgdk:latest -c 'make -f "${GDK:-/sgdk}/makefile.gen"'
+docker run --rm --user 0:0 -v "$PWD/megadrive:/src" -w /src --entrypoint /bin/sh ghcr.io/stephane-d/sgdk:latest -c 'make -f "${GDK:-/sgdk}/makefile.gen"'
 ```
 Готовый ROM появится в `megadrive/out/rom.bin`.
 

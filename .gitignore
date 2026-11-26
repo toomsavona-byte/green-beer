@@ -10,5 +10,6 @@ android/
 *.apk
 data/
 megadrive/out/
+megadrive/src/boot/
 green-beer-pizedes-md.bin
 

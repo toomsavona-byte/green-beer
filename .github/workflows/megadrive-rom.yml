@@ -32,7 +32,7 @@ jobs:
 
       - name: Compile Sega Mega Drive 16-bit ROM with official SGDK container
         run: |
-          docker run --rm \
+          docker run --rm --user 0:0 \
             -v "${{ github.workspace }}/megadrive:/src" \
             -w /src \
             --entrypoint /bin/sh \
@@ -49,10 +49,9 @@ jobs:
                 done
               fi
               echo "Using SGDK at: $GDK_DIR"
-              ls -la /src /src/src /src/res
               GDK="$GDK_DIR" make -f "$GDK_DIR/makefile.gen"
             '
-          sudo chown -R "$(id -u):$(id -g)" megadrive/out
+          sudo chown -R "$(id -u):$(id -g)" megadrive
 
       - name: Copy ROM binary for download
         run: |
